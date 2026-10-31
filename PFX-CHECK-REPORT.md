@@ -1,92 +1,86 @@
 # Báo cáo kiểm tra PFX trong GitHub Secrets / CI
 
 **Repo:** `ZeiGarNik-code/NonstopMaker` (public)
-**Ngày kiểm tra:** 31/10/2026
+**Kiểm tra lần đầu:** 31/10/2026 · **Kiểm tra lại sau khi sửa:** 01/11/2026
 **Branch làm việc:** `arena/dd346b94-nonstopmaker`
 
-## Kết luận nhanh: 🔴 PFX chưa dùng để ký được
+## Kết luận nhanh: 🟢 PFX ĐẠT — ký được (14/14 hạng mục)
 
-Secret chứng chỉ **có tồn tại** nhưng nội dung **không phải file `.pfx` đã mã hóa base64**.
-Cần lưu lại secret `WINDOWS_CERTIFICATE` bằng đúng nội dung base64 của file `.pfx` thật (xem mục *Cách sửa*).
+Sau khi tạo chứng chỉ tự ký mới bằng [`scripts/create-pfx.ps1`](scripts/create-pfx.ps1) và cập nhật lại 2 secret, PFX đã vượt qua toàn bộ kiểm tra ở **2 lần chạy liên tiếp**:
+
+- <https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41237411215> (commit `48034f8`)
+- <https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41237536457> (commit `0aae34b`)
 
 | # | Hạng mục | Kết quả | Chi tiết |
 |---|----------|---------|----------|
-| 1 | Secret `WINDOWS_CERTIFICATE` tồn tại | ✅ Có | Phát hiện trên GitHub Actions runner |
-| 2 | Secret `WINDOWS_CERTIFICATE_PASSWORD` tồn tại | ✅ Có | Chỉ xác nhận tồn tại; **chưa kiểm được đúng/sai** vì bước 3 lỗi |
-| 3 | Nội dung là base64 hợp lệ | 🔴 **Không** | Thử đủ 5 cách đều thất bại: base64 chuẩn, tự thêm padding, base64 URL-safe, trích thân PEM, hex |
-| 4 | Mở được PKCS#12 (`.pfx`/`.p12`) | ⏭️ Chưa kiểm được | Bị chặn bởi lỗi ở bước 3 |
-| 5 | Có private key để ký | ⏭️ Chưa kiểm được | Bị chặn bởi lỗi ở bước 3 |
-| 6 | Hạn dùng chứng chỉ (expiry) | ⏭️ Chưa kiểm được | Bị chặn bởi lỗi ở bước 3 |
-| 7 | Có workflow nào đang dùng 2 secret này để ký | 🔴 **Chưa có** | Repo chưa có workflow ký; secret hiện không được dùng ở đâu (xem mục cuối) |
+| 1 | Secret `WINDOWS_CERTIFICATE` | ✅ | Base64 dài **4.704 ký tự**, 0 ký tự lạ, mở đầu `MII`, giải mã ra file 3.526 byte |
+| 2 | Secret `WINDOWS_CERTIFICATE_PASSWORD` | ✅ | Mật khẩu **đúng** với chính file PFX trên (`pkcs12=OK password_correct`) |
+| 3 | Parse PKCS#12 (`.pfx`) | ✅ | Mở thành công bằng OpenSSL trên runner |
+| 4 | Private key đi kèm | ✅ | Có — **ký được** (`can_sign=yes`, chỉ đếm, không in key) |
+| 5 | Chủ thể chứng chỉ | `CN=NonstopMaker` (tự ký: issuer trùng subject) | |
+| 6 | Hiệu lực | ✅ Còn hạn | 31/10/2026 → **31/10/2029** (GMT), còn 1.095 ngày lúc kiểm tra |
+| 7 | Serial | `6D869309B6DB37834C45096C99FE85C5` | |
+| 8 | SHA256 Fingerprint | `4D:A9:8C:87:5E:74:0F:7A:4E:A4:4F:57:46:1C:D5:5B:AB:11:FC:B0:80:DA:71:81:D6:22:49:E0:30:BA:02:DF` | |
 
-## Bằng chứng (chỉ thống kê định dạng — không có nội dung secret)
-
-Workflow chẩn đoán [`.github/workflows/check-pfx.yml`](.github/workflows/check-pfx.yml) chạy trực tiếp trên GitHub Actions (nơi duy nhất đọc được secrets khi chạy), không bao giờ in giá trị secret/mật khẩu/private key. Kết quả của lần chạy gần nhất:
-
-- Run: <https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41219946289> (commit `bc179f5`)
-- Commit Status API ghi lại:
+Bằng chứng (Commit Status API, trích):
 
 ```
 pfx/cert-present   success  cert_present=WINDOWS_CERTIFICATE
 pfx/pass-present   success  pass_present=WINDOWS_CERTIFICATE_PASSWORD
-pfx/secret-format  success  raw_len=77 stripped_len=68 mod4=0 invalid_b64_chars=4
-pfx/secret-flags   success  urlsafe_chars=no pem_header=no starts_MII=no pure_hex=no
-pfx/base64         failure  base64=INVALID found_cert=WINDOWS_CERTIFICATE decoded_via=NONE
+pfx/secret-format  success  raw_len=4704 stripped_len=4704 mod4=0 invalid_b64_chars=0
+pfx/secret-flags   success  urlsafe_chars=no pem_header=no starts_MII=yes pure_hex=no
+pfx/base64         success  decode=OK via=standard size_bytes=3526
+pfx/pkcs12         success  pkcs12=OK password_correct
+pfx/private-key    success  private_key=PRESENT can_sign=yes
+pfx/expiry         success  expiry=STILL_VALID days_left=1095
 ```
 
-**Vì sao khẳng định giá trị hiện tại không phải PFX?**
+## ⚠️ Vấn đề còn lại: build Windows dùng TÊN SECRET KHÁC
 
-- Chỉ **77 ký tự** (68 ký tự sau khi bỏ khoảng trắng). Một file `.pfx` thật (chứng chỉ + private key) thường nặng ~2–10 KB → base64 phải dài **hàng nghìn ký tự**. 68 ký tự base64 chỉ tương đương tối đa ~51 byte — không thể chứa một chứng chỉ.
-- Có **4 ký tự nằm ngoài bảng base64** (`A–Z a–z 0–9 + / =`) nên không giải mã được.
-- Không có header PEM (`-----BEGIN ...`), không bắt đầu bằng `MII` (mở đầu điển hình của chứng chỉ/PFX dạng DER khi base64 hóa), không phải chuỗi hex, không phải base64 URL-safe.
+Workflow build thật — `.github/workflows/build-windows-app.yml` trên branch `arena/9089ab23-nonstopmaker` — **không** đọc `WINDOWS_CERTIFICATE*`, mà đọc:
 
-Nói cách khác: nhiều khả năng đã dán nhầm thứ khác (đường dẫn file, thumbprint, một đoạn text/mật khẩu, hoặc chỉ một phần của file base64...) thay vì toàn bộ nội dung base64 của file `.pfx`. Giá trị chính xác không thể xem lại được — GitHub Secrets là *write-only*, và workflow kiểm tra được thiết kế cố ý không in ra nội dung.
+- `WINDOWS_CSC_PFX_BASE64`
+- `WINDOWS_CSC_KEY_PASSWORD`
 
-## Cách sửa
+Cả 2 secret này **chưa tồn tại** (trình kiểm tra đã bổ sung 2 tên này vào danh sách ứng viên và xác nhận không thấy), vì vậy bản build gần nhất ([run 41233135496](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41233135496)) vẫn cho artifact **`NonstopMaker-Lite-Windows-unsigned`**.
 
-Cặp tên `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` là chuẩn trong hướng dẫn ký Windows của Tauri: `WINDOWS_CERTIFICATE` phải là **bản base64 của file `.pfx`**, tạo bằng `certutil -encode certificate.pfx base64cert.txt`, còn `WINDOWS_CERTIFICATE_PASSWORD` là mật khẩu export của chính file `.pfx` đó.
-(Nguồn: <https://v1.tauri.app/v1/guides/distribution/sign-windows/>)
+**Cách sửa (2 phút):** tạo thêm 2 secret với *cùng giá trị*:
 
-1. **Trên máy Windows có file `certificate.pfx` thật**, mã hóa lại — chọn 1 trong 2 cách:
+```powershell
+# Copy lại base64 của file .pfx đã tạo vào clipboard
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\Documents\NonstopMaker-Cert\publisher.pfx")) | Set-Clipboard
+```
 
-   ```bat
-   rem Cách A (theo Tauri, cho ra file nhiều dòng kèm header BEGIN/END)
-   certutil -encode certificate.pfx base64cert.txt
-   ```
+Vào `Settings → Secrets and variables → Actions → New repository secret`:
 
-   ```powershell
-   # Cách B (base64 một dòng duy nhất - tương thích mọi công cụ)
-   [Convert]::ToBase64String([IO.File]::ReadAllBytes(".\certificate.pfx")) |
-     Set-Content -NoNewline .\pfx-base64.txt
-   ```
+1. Tên `WINDOWS_CSC_PFX_BASE64` → dán (Ctrl+V).
+2. Tên `WINDOWS_CSC_KEY_PASSWORD` → nhập cùng mật khẩu PFX.
 
-   Trên Linux/macOS: `base64 -w0 certificate.pfx > pfx-base64.txt`
+Chạy lại workflow build Windows; artifact đúng kỳ vọng sẽ đổi thành `NonstopMaker-Lite-Windows-**signed**`.
+*(Cách khác: sửa workflow build để dùng thống nhất tên `WINDOWS_CERTIFICATE*` — tùy bạn chọn một chuẩn, đừng để hai cặp lệch nhau.)*
 
-2. **Kiểm tra nhanh trước khi lưu:** file text kết quả phải dài **hàng nghìn ký tự**; nếu dùng Cách B, mở đầu thường là `MII...`.
+## Lịch sử xử lý
 
-3. **Cập nhật secret:** GitHub repo → `Settings → Secrets and variables → Actions → WINDOWS_CERTIFICATE → Update` → dán **toàn bộ** nội dung file ở bước 1 (đừng cắt bớt dòng nào).
+| Thời điểm | Sự việc |
+|---|---|
+| 31/10/2026 | Kiểm tra lần đầu: `WINDOWS_CERTIFICATE` chỉ dài **77 ký tự**, không phải base64 của PFX (4 ký tự ngoài bảng base64, không header PEM, không mở đầu `MII`) → 🔴 không ký được. Bằng chứng: [run 41219946289](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41219946289) |
+| 31/10/2026 | Tạo bộ script `scripts/create-pfx.ps1` / `scripts/encode-existing-pfx.ps1` + [`docs/HUONG-DAN-TAO-PFX.md`](docs/HUONG-DAN-TAO-PFX.md) + `.gitignore` chặn commit nhầm khóa bí mật |
+| 01/11/2026 | Người dùng tạo chứng chỉ tự ký `CN=NonstopMaker` (RSA 3072, hạn 3 năm) và cập nhật lại 2 secret → kiểm tra lại **ĐẠT 14/14**, 2 lần liên tiếp |
 
-4. Đảm bảo `WINDOWS_CERTIFICATE_PASSWORD` là mật khẩu export của **chính file `.pfx` đó**. (Độ đúng của mật khẩu chỉ kiểm được sau khi sửa xong bước 3.)
+## Lưu ý lâu dài
 
-5. **Chạy lại kiểm tra:** merge workflow `check-pfx.yml` vào `main`, rồi vào `Actions → Check PFX Secret → Run workflow`.
-   Kỳ vọng đạt đủ các status: `pfx/base64` ✅ → `pfx/pkcs12` ✅ (mật khẩu đúng) → `pfx/private-key` ✅ (ký được) → `pfx/expiry` ✅ kèm số ngày còn lại, cùng subject/issuer/fingerprint trong Step Summary của run.
+- Đây là **chứng chỉ tự ký**: ký được về kỹ thuật, nhưng máy người dùng khác vẫn gặp SmartScreen «Unknown publisher». Phát hành công khai cần chứng chỉ CA (OV/EV) hoặc Azure Artifact Signing.
+- **Hết hạn 31/10/2029** — đặt nhắc gia hạn/tạo mới trước thời điểm này; khi tạo mới phải cập nhật lại *cả hai* cặp secret (nếu còn dùng song song).
+- Giữ `publisher.pfx` gốc + mật khẩu trong kho an toàn (ổ mã hóa / password manager). Lộ bất kỳ đâu → tạo chứng chỉ mới ngay.
+- Repo public nên log/status CI là công khai; workflow kiểm tra chỉ xuất thông tin công khai của chứng chỉ và thống kê định dạng, không bao giờ in giá trị secret/mật khẩu/private key.
 
-> ⚠️ Repo đang **public** nên log Actions và Commit Status ai cũng xem được. Workflow kiểm tra chỉ xuất *thông tin công khai* của chứng chỉ (subject, issuer, hạn dùng, fingerprint — vốn đã lộ trên mọi file đã ký) và tên/độ dài dạng thống kê của secret. Tuyệt đối không tự thêm bước nào in giá trị secret, mật khẩu hay private key vào log.
-
-## Hiện trạng repo / CI liên quan
-
-- `main` (remote) hiện chỉ có `LICENSE` + `README.md` — **chưa có bất kỳ workflow nào**.
-- `.github/workflows/blank.yml` (workflow mẫu "Hello, world!") mới nằm ở branch `ZeiGarNik-code-patch-1` / branch Arena này; PR #1 cho nó đã đóng mà chưa merge. File này không dùng secret/PFX nào cả.
-- Chưa có Environment, Release, Artifact hay Deployment nào.
-- Token tích hợp của Arena bị GitHub từ chối đọc danh sách Secrets/Variables qua API (`403 Resource not accessible by integration`) — đây là lý do phải kiểm tra gián tiếp bằng workflow chạy trên Actions như trên. (Kể cả có quyền admin, GitHub cũng chỉ cho xem *tên* secret, không bao giờ cho đọc lại *giá trị*.)
-- Việc cần làm tiếp theo sau khi sửa secret: bổ sung step *import windows certificate* (windows-latest, decode `WINDOWS_CERTIFICATE` → `Import-PfxCertificate` bằng `WINDOWS_CERTIFICATE_PASSWORD`) vào workflow build/ký thực tế, vì hiện tại 2 secret này chưa được workflow nào sử dụng.
-
-## Thay đổi đã thực hiện trên branch này
+## Thay đổi trên branch này
 
 | Commit | Nội dung |
 |--------|----------|
-| `6ca9f72` | Thêm workflow chẩn đoán `check-pfx.yml` (kiểm tra 18 tên secret chứng chỉ + 8 tên secret mật khẩu ứng viên) |
-| `9e10499` | Bổ sung annotations (không đọc được qua API nên đã thay bằng cách dưới) |
-| `5dd665f` | Báo kết quả qua Commit Status API (contexts `pfx/...`) → xác định được 2 secret `WINDOWS_*` |
-| `bc179f5` | Chẩn đoán sâu định dạng + thử 5 cách decode dự phòng → kết luận base64 không hợp lệ, dài 77 ký tự |
-| (commit này) | Báo cáo `PFX-CHECK-REPORT.md` |
+| `6ca9f72` → `bc179f5` | Workflow chẩn đoán `check-pfx.yml` + báo kết quả qua Commit Status API + chẩn đoán sâu định dạng secret |
+| `1977df4` | Báo cáo lần đầu (🔴) |
+| `635fc02` → `4b18a31` | Script tạo PFX + hướng dẫn (kèm cách tải ZIP không cần Git) + `.gitignore` |
+| `48034f8` | Chạy lại kiểm tra sau khi cập nhật secret → **ĐẠT** |
+| `0aae34b` | Bổ sung kiểm tra cặp secret `WINDOWS_CSC_*` của workflow build Windows → xác nhận chưa tồn tại |
+| (commit này) | Cập nhật báo cáo theo trạng thái cuối (🟢) |
