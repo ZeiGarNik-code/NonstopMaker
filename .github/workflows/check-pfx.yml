@@ -169,17 +169,70 @@ jobs:
           fi
 
           # 1) Giải mã base64 (GitHub Secret là text nên PFX phải được base64 hóa)
-          if ! printf '%s' "$CERT_VALUE" | tr -d '[:space:]' | base64 -d > /tmp/cert.pfx 2>/tmp/b64.err; then
-            echo "❌ Secret KHÔNG phải base64 hợp lệ -> không giải mã ra file .pfx được"
-            echo "- ❌ Base64: **không hợp lệ**" >> "$GITHUB_STEP_SUMMARY"
-            post_status "pfx/base64" "failure" "base64=INVALID found_cert=$FOUND_CERT"
+          #    Thử lần lượt: chuẩn -> thêm padding -> URL-safe -> trích PEM -> hex.
+          #    Chỉ báo thống kê định dạng, KHÔNG in nội dung secret.
+          STRIPPED=$(printf '%s' "$CERT_VALUE" | tr -d '[:space:]')
+          RAW_LEN=${#CERT_VALUE}
+          STRIPPED_LEN=${#STRIPPED}
+          MOD4=$((STRIPPED_LEN % 4))
+          INVALID_COUNT=$(printf '%s' "$STRIPPED" | tr -d 'A-Za-z0-9+/=' | wc -c | tr -d ' ')
+          HAS_URLSAFE=no; case "$STRIPPED" in *-*|*_*) HAS_URLSAFE=yes;; esac
+          HAS_PEM=no; case "$CERT_VALUE" in *"-----BEGIN"*) HAS_PEM=yes;; esac
+          STARTS_MII=no; case "$STRIPPED" in MII*) STARTS_MII=yes;; esac
+          PURE_HEX=no
+          if printf '%s' "$STRIPPED" | grep -qE '^[0-9A-Fa-f]+$' && [ $((STRIPPED_LEN % 2)) -eq 0 ]; then PURE_HEX=yes; fi
+          post_status "pfx/secret-format" "success" "raw_len=$RAW_LEN stripped_len=$STRIPPED_LEN mod4=$MOD4 invalid_b64_chars=$INVALID_COUNT"
+          post_status "pfx/secret-flags" "success" "urlsafe_chars=$HAS_URLSAFE pem_header=$HAS_PEM starts_MII=$STARTS_MII pure_hex=$PURE_HEX"
+
+          decoded=0; decoded_via=""
+          if printf '%s' "$STRIPPED" | base64 -d > /tmp/cert.pfx 2>/dev/null; then
+            decoded=1; decoded_via="standard"
+          fi
+          if [ "$decoded" = "0" ] && [ "$MOD4" != "0" ]; then
+            PADDED="$STRIPPED"; while [ $(( ${#PADDED} % 4 )) -ne 0 ]; do PADDED="${PADDED}="; done
+            if printf '%s' "$PADDED" | base64 -d > /tmp/cert.pfx 2>/dev/null; then decoded=1; decoded_via="added_padding"; fi
+            unset PADDED
+          fi
+          if [ "$decoded" = "0" ] && [ "$HAS_URLSAFE" = "yes" ]; then
+            CONVERTED=$(printf '%s' "$STRIPPED" | tr -- '-_' '+/')
+            while [ $(( ${#CONVERTED} % 4 )) -ne 0 ]; do CONVERTED="${CONVERTED}="; done
+            if printf '%s' "$CONVERTED" | base64 -d > /tmp/cert.pfx 2>/dev/null; then decoded=1; decoded_via="urlsafe"; fi
+            unset CONVERTED
+          fi
+          if [ "$decoded" = "0" ] && [ "$HAS_PEM" = "yes" ]; then
+            if printf '%s' "$CERT_VALUE" | sed -n '/-----BEGIN/,/-----END/p' | grep -v -- '-----' | tr -d '[:space:]' | base64 -d > /tmp/cert.pfx 2>/dev/null; then
+              decoded=1; decoded_via="pem_body"
+            fi
+          fi
+          if [ "$decoded" = "0" ] && [ "$PURE_HEX" = "yes" ]; then
+            if printf '%s' "$STRIPPED" | python3 -c 'import sys,binascii; sys.stdout.buffer.write(binascii.unhexlify(sys.stdin.read().strip()))' > /tmp/cert.pfx 2>/dev/null; then
+              decoded=1; decoded_via="hex"
+            fi
+          fi
+          unset STRIPPED
+
+          if [ "$decoded" != "1" ]; then
+            echo "❌ Secret KHÔNG giải mã được bằng base64 (chuẩn/padding/URL-safe/PEM) hay hex"
+            echo "- ❌ Base64: **không hợp lệ** (raw_len=$RAW_LEN, mod4=$MOD4, invalid_chars=$INVALID_COUNT, pem=$HAS_PEM, starts_MII=$STARTS_MII)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Cách sửa: mã hóa lại file .pfx thật bằng base64 rồi lưu lại secret, VD PowerShell: \`[Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx'))\` hoặc Linux/macOS: \`base64 -w0 cert.pfx\`" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/base64" "failure" "base64=INVALID found_cert=$FOUND_CERT decoded_via=NONE"
             rm -f /tmp/cert.pfx
             exit 0
           fi
           SIZE=$(wc -c < /tmp/cert.pfx | tr -d ' ')
-          echo "✅ Base64 hợp lệ, kích thước file PFX: ${SIZE} byte"
-          echo "- ✅ Base64: hợp lệ (${SIZE} byte sau giải mã)" >> "$GITHUB_STEP_SUMMARY"
-          post_status "pfx/base64" "success" "base64=OK size_bytes=$SIZE pass_source=${FOUND_PASS:-EMPTY_PASSWORD}"
+          echo "✅ Giải mã được (via=$decoded_via), kích thước file: ${SIZE} byte"
+          echo "- ✅ Giải mã: thành công qua \`$decoded_via\` (${SIZE} byte)" >> "$GITHUB_STEP_SUMMARY"
+          post_status "pfx/base64" "success" "decode=OK via=$decoded_via size_bytes=$SIZE pass_source=${FOUND_PASS:-EMPTY_PASSWORD}"
+
+          # Phân loại nhanh: file sau giải mã có thể là DER/PEM cert đơn lẻ chứ không phải PFX
+          if openssl x509 -inform DER -in /tmp/cert.pfx -noout -subject > /tmp/type.txt 2>/dev/null || openssl x509 -inform PEM -in /tmp/cert.pfx -noout -subject > /tmp/type.txt 2>/dev/null; then
+            TYPE_SUBJECT=$(cat /tmp/type.txt 2>/dev/null || true)
+            echo "⚠️ File sau giải mã là chứng chỉ X.509 đơn lẻ, KHÔNG phải PFX/PKCS#12: $TYPE_SUBJECT"
+            echo "- ⚠️ Loại file: **X.509 đơn lẻ, không phải PFX** ($TYPE_SUBJECT)" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/decoded-type" "failure" "type=X509_CERT_ONLY_NOT_PFX $TYPE_SUBJECT"
+          else
+            post_status "pfx/decoded-type" "success" "type=NOT_PLAIN_X509 (se tiep tuc thu PKCS12)"
+          fi
 
           # 2) Parse PKCS#12 (thử cả chế độ -legacy cho cert thuật toán cũ)
           parse_ok=0
