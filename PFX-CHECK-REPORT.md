@@ -35,16 +35,18 @@ pfx/private-key    success  private_key=PRESENT can_sign=yes
 pfx/expiry         success  expiry=STILL_VALID days_left=1095
 ```
 
-## ⚠️ Vấn đề còn lại: build Windows dùng TÊN SECRET KHÁC
+## ✅ Đã xử lý xong: lệch TÊN SECRET với build Windows
 
 Workflow build thật — `.github/workflows/build-windows-app.yml` trên branch `arena/9089ab23-nonstopmaker` — **không** đọc `WINDOWS_CERTIFICATE*`, mà đọc:
 
 - `WINDOWS_CSC_PFX_BASE64`
 - `WINDOWS_CSC_KEY_PASSWORD`
 
-Cả 2 secret này **chưa tồn tại** (trình kiểm tra đã bổ sung 2 tên này vào danh sách ứng viên và xác nhận không thấy), vì vậy bản build gần nhất ([run 41233135496](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41233135496)) vẫn cho artifact **`NonstopMaker-Lite-Windows-unsigned`**.
+Ban đầu cả 2 secret này chưa tồn tại nên bản build lúc đó ([run 41233135496](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41233135496)) cho artifact `NonstopMaker-Lite-Windows-unsigned`. **Hiện đã tạo đủ cả 2 và được xác thực độc lập** tại [run 41238238643](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41238238643) (24/24 status đạt): base64 4.704 ký tự → 3.526 byte, **trùng khớp từng byte** với file trong `WINDOWS_CERTIFICATE` (`same_pfx_bytes=yes`), mở PKCS#12 bằng `WINDOWS_CSC_KEY_PASSWORD` thành công, có private key, cùng fingerprint `4D:A9:...:02:DF`, còn hạn 1.095 ngày.
 
-**Cách sửa (2 phút):** tạo thêm 2 secret với *cùng giá trị*:
+Việc còn lại duy nhất nằm ngoài phạm vi kiểm tra này: **chạy lại workflow build Windows** — artifact kỳ vọng sẽ đổi thành `NonstopMaker-Lite-Windows-**signed**`. (Secret là cấp repo nên mọi branch đều thấy cặp CSC mới.)
+
+**Cách đã sửa** (giữ lại để tham chiếu mỗi khi gia hạn chứng chỉ — nhớ cập nhật *cả hai* cặp): tạo thêm 2 secret với *cùng giá trị*:
 
 ```powershell
 # Copy lại base64 của file .pfx đã tạo vào clipboard
@@ -66,6 +68,7 @@ Chạy lại workflow build Windows; artifact đúng kỳ vọng sẽ đổi th�
 | 31/10/2026 | Kiểm tra lần đầu: `WINDOWS_CERTIFICATE` chỉ dài **77 ký tự**, không phải base64 của PFX (4 ký tự ngoài bảng base64, không header PEM, không mở đầu `MII`) → 🔴 không ký được. Bằng chứng: [run 41219946289](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41219946289) |
 | 31/10/2026 | Tạo bộ script `scripts/create-pfx.ps1` / `scripts/encode-existing-pfx.ps1` + [`docs/HUONG-DAN-TAO-PFX.md`](docs/HUONG-DAN-TAO-PFX.md) + `.gitignore` chặn commit nhầm khóa bí mật |
 | 01/11/2026 | Người dùng tạo chứng chỉ tự ký `CN=NonstopMaker` (RSA 3072, hạn 3 năm) và cập nhật lại 2 secret → kiểm tra lại **ĐẠT 14/14**, 2 lần liên tiếp |
+| 01/11/2026 | Phát hiện workflow build Windows dùng tên `WINDOWS_CSC_*` → người dùng tạo thêm cặp này với cùng giá trị → xác thực độc lập **ĐẠT** (24/24 status, trùng từng byte với `WINDOWS_CERTIFICATE`, mật khẩu CSC đúng). Bằng chứng: [run 41238238643](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41238238643) |
 
 ## Lưu ý lâu dài
 
@@ -83,4 +86,6 @@ Chạy lại workflow build Windows; artifact đúng kỳ vọng sẽ đổi th�
 | `635fc02` → `4b18a31` | Script tạo PFX + hướng dẫn (kèm cách tải ZIP không cần Git) + `.gitignore` |
 | `48034f8` | Chạy lại kiểm tra sau khi cập nhật secret → **ĐẠT** |
 | `0aae34b` | Bổ sung kiểm tra cặp secret `WINDOWS_CSC_*` của workflow build Windows → xác nhận chưa tồn tại |
-| (commit này) | Cập nhật báo cáo theo trạng thái cuối (🟢) |
+| `b2a0230` | Cập nhật báo cáo: cặp `WINDOWS_CERTIFICATE*` đạt, cảnh báo lệch tên CSC |
+| `2e81d5f` | Trình kiểm tra mở thử độc lập cặp `WINDOWS_CSC_*` (kèm so trùng từng byte) → **ĐẠT 24/24** |
+| (commit này) | Chốt báo cáo: cả 2 cặp secret đều đạt, sẵn sàng build bản signed |
