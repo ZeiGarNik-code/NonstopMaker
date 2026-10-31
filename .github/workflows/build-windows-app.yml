@@ -68,7 +68,7 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '## Windows installer and portable executable built successfully.' -Encoding utf8
       - name: Upload Windows executables
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NonstopMaker-Lite-Windows-${{ steps.signing.outputs.mode }}
           path: release/*.exe
