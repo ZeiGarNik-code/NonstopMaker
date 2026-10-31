@@ -141,6 +141,20 @@ jobs:
             post_status "pfx/pass-present" "failure" "pass_present=NONE"
           fi
 
+          # Cap secret rieng cua workflow build Windows (build-windows-app.yml)
+          if [ -n "${WINDOWS_CSC_PFX_BASE64:-}" ]; then
+            echo "CSC_PRESENT=yes" >> "$GITHUB_ENV"
+            post_status "csc/cert-present" "success" "csc_cert_present=WINDOWS_CSC_PFX_BASE64"
+          else
+            echo "CSC_PRESENT=no" >> "$GITHUB_ENV"
+            post_status "csc/cert-present" "failure" "csc_cert_present=NONE"
+          fi
+          if [ -n "${WINDOWS_CSC_KEY_PASSWORD:-}" ]; then
+            post_status "csc/pass-present" "success" "csc_pass_present=WINDOWS_CSC_KEY_PASSWORD"
+          else
+            post_status "csc/pass-present" "failure" "csc_pass_present=NONE"
+          fi
+
       - name: Validate PFX file (base64 + PKCS#12 parse, public info only)
         if: env.FOUND_CERT != ''
         shell: bash
@@ -314,6 +328,133 @@ jobs:
           # 5) Dọn dẹp ngay
           rm -f /tmp/cert.pfx /tmp/cert.pem /tmp/cert.info /tmp/b64.err /tmp/pkcs.err
           unset PFX_PASS_TMP CERT_VALUE
+
+      - name: Validate WINDOWS_CSC pair (used by build-windows-app.yml)
+        if: env.CSC_PRESENT == 'yes'
+        shell: bash
+        run: |
+          set +x
+          post_status() {
+            local ctx="$1" state="$2" desc="$3"
+            desc=$(printf '%s' "$desc" | tr '\n' ' ' | cut -c1-140)
+            if command -v gh >/dev/null 2>&1; then
+              gh api "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+                -f state="$state" -f context="$ctx" -f description="$desc" \
+                -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                >/dev/null 2>&1 || echo "WARN: post_status failed: $ctx"
+            fi
+          }
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Kiểm tra cặp CSC của workflow build Windows" >> "$GITHUB_STEP_SUMMARY"
+
+          export CSC_PASS_TMP="${WINDOWS_CSC_KEY_PASSWORD:-}"
+
+          # Dinh dang (chi thong ke, khong in noi dung)
+          CSC_STRIPPED=$(printf '%s' "$WINDOWS_CSC_PFX_BASE64" | tr -d '[:space:]')
+          CSC_LEN=${#CSC_STRIPPED}
+          CSC_INVALID=$(printf '%s' "$CSC_STRIPPED" | tr -d 'A-Za-z0-9+/=' | wc -c | tr -d ' ')
+          CSC_MII=no; case "$CSC_STRIPPED" in MII*) CSC_MII=yes;; esac
+          post_status "csc/secret-format" "success" "raw_len=$CSC_LEN invalid_b64_chars=$CSC_INVALID starts_MII=$CSC_MII"
+
+          # Giai ma base64
+          if ! printf '%s' "$CSC_STRIPPED" | base64 -d > /tmp/csc.pfx 2>/dev/null; then
+            echo "- ❌ CSC base64: không hợp lệ" >> "$GITHUB_STEP_SUMMARY"
+            post_status "csc/base64" "failure" "csc_base64=INVALID"
+            rm -f /tmp/csc.pfx; unset CSC_STRIPPED CSC_PASS_TMP
+            exit 0
+          fi
+          unset CSC_STRIPPED
+          CSC_SIZE=$(wc -c < /tmp/csc.pfx | tr -d ' ')
+          echo "- ✅ CSC base64: hợp lệ (${CSC_SIZE} byte)" >> "$GITHUB_STEP_SUMMARY"
+          post_status "csc/base64" "success" "csc_decode=OK size_bytes=$CSC_SIZE"
+
+          # Co phai dung file PFX cua WINDOWS_CERTIFICATE khong? (so hash file da giai ma, khong in hash)
+          SAME="unknown"
+          if [ -n "${WINDOWS_CERTIFICATE:-}" ]; then
+            if printf '%s' "$WINDOWS_CERTIFICATE" | tr -d '[:space:]' | base64 -d > /tmp/win.pfx 2>/dev/null; then
+              H1=$(sha256sum /tmp/csc.pfx | cut -d' ' -f1)
+              H2=$(sha256sum /tmp/win.pfx | cut -d' ' -f1)
+              if [ "$H1" = "$H2" ]; then SAME=yes; else SAME=no; fi
+              unset H1 H2
+            fi
+            rm -f /tmp/win.pfx
+          fi
+          if [ "$SAME" = "no" ]; then
+            post_status "csc/same-as-windows-certificate" "failure" "same_pfx_bytes_as_WINDOWS_CERTIFICATE=no"
+            echo "- ⚠️ File trong WINDOWS_CSC_PFX_BASE64 KHÁC file trong WINDOWS_CERTIFICATE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            post_status "csc/same-as-windows-certificate" "success" "same_pfx_bytes_as_WINDOWS_CERTIFICATE=$SAME"
+          fi
+
+          # Mo PKCS#12 bang mat khau CSC
+          parse_ok=0
+          for opts in "" "-legacy"; do
+            if openssl pkcs12 $opts -in /tmp/csc.pfx -nokeys -clcerts \
+                 -passin env:CSC_PASS_TMP -out /tmp/csc.pem 2>/dev/null; then
+              parse_ok=1; break
+            fi
+          done
+          if [ "$parse_ok" != "1" ]; then
+            echo "- ❌ CSC PKCS#12: mở thất bại (sai WINDOWS_CSC_KEY_PASSWORD hoặc file hỏng)" >> "$GITHUB_STEP_SUMMARY"
+            post_status "csc/pkcs12" "failure" "csc_pkcs12=FAIL wrong_csc_password_or_not_a_pfx"
+            rm -f /tmp/csc.pfx /tmp/csc.pem; unset CSC_PASS_TMP
+            exit 0
+          fi
+          echo "- ✅ CSC PKCS#12: mở thành công, mật khẩu CSC đúng" >> "$GITHUB_STEP_SUMMARY"
+          post_status "csc/pkcs12" "success" "csc_pkcs12=OK csc_password_correct"
+
+          # Private key (chi dem, khong in)
+          KEY_COUNT=0
+          for opts in "" "-legacy"; do
+            KEY_COUNT=$(openssl pkcs12 $opts -in /tmp/csc.pfx -nocerts -nodes \
+              -passin env:CSC_PASS_TMP 2>/dev/null | grep -c "PRIVATE KEY" || true)
+            [ "${KEY_COUNT:-0}" -gt 0 ] && break
+          done
+          if [ "${KEY_COUNT:-0}" -gt 0 ]; then
+            post_status "csc/private-key" "success" "csc_private_key=PRESENT can_sign=yes"
+          else
+            post_status "csc/private-key" "failure" "csc_private_key=MISSING can_sign=no"
+          fi
+
+          # Thong tin cong khai + han dung
+          CSC_SUBJECT=$(openssl x509 -in /tmp/csc.pem -noout -subject 2>/dev/null || true)
+          CSC_FPR=$(openssl x509 -in /tmp/csc.pem -noout -fingerprint -sha256 2>/dev/null || true)
+          post_status "csc/cert-subject" "success" "$CSC_SUBJECT"
+          post_status "csc/cert-fingerprint" "success" "$CSC_FPR"
+          ENDDATE=$(openssl x509 -in /tmp/csc.pem -noout -enddate 2>/dev/null | cut -d= -f2- || true)
+          DAYS_LEFT="unknown"
+          if [ -n "$ENDDATE" ]; then
+            END_EPOCH=$(date -d "$ENDDATE" +%s 2>/dev/null || echo "")
+            if [ -n "$END_EPOCH" ]; then
+              DAYS_LEFT=$(( (END_EPOCH - $(date +%s)) / 86400 ))
+            fi
+          fi
+          if openssl x509 -in /tmp/csc.pem -noout -checkend 0 >/dev/null; then
+            post_status "csc/expiry" "success" "csc_expiry=STILL_VALID days_left=$DAYS_LEFT end=$ENDDATE"
+          else
+            post_status "csc/expiry" "failure" "csc_expiry=EXPIRED days_left=$DAYS_LEFT end=$ENDDATE"
+          fi
+          {
+            echo "- CSC subject: \`$CSC_SUBJECT\`"
+            echo "- CSC hết hạn: $ENDDATE (còn ~$DAYS_LEFT ngày)"
+            echo "- Trùng file với WINDOWS_CERTIFICATE: **$SAME**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          rm -f /tmp/csc.pfx /tmp/csc.pem
+          unset CSC_PASS_TMP
+
+      - name: Note when WINDOWS_CSC_PFX_BASE64 missing
+        if: env.CSC_PRESENT == 'no'
+        shell: bash
+        run: |
+          echo "ℹ️ Secret WINDOWS_CSC_PFX_BASE64 chưa có -> workflow build Windows sẽ build UNSIGNED."
+          {
+            echo ""
+            echo "### Cặp CSC của workflow build Windows"
+            echo "❌ \`WINDOWS_CSC_PFX_BASE64\` chưa tồn tại — bản build Windows sẽ **unsigned**."
+            echo "Tạo thêm 2 secret \`WINDOWS_CSC_PFX_BASE64\` + \`WINDOWS_CSC_KEY_PASSWORD\` với cùng giá trị như cặp \`WINDOWS_CERTIFICATE*\`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verdict when no PFX secret found
         if: env.FOUND_CERT == ''
