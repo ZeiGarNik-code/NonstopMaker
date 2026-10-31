@@ -1,0 +1,19 @@
+{
+  "name": "NonstopMaker Lite — DJ Set Builder",
+  "short_name": "NonstopMaker Lite",
+  "description": "Phân tích BPM/tone, xếp set và render MP3 trên thiết bị; không tải nhạc lên máy chủ.",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07101f",
+  "theme_color": "#07101f",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
