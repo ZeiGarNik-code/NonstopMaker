@@ -14,6 +14,7 @@
 #   Actions tab -> "Check PFX Secret" -> Run workflow
 # Nếu bạn đã lưu secret với tên khác ngoài danh sách ứng viên bên dưới,
 # hãy thêm tên đó vào cả khối `env:` lẫn mảng trong step kiểm tra.
+# Re-run trigger: 2026-10-31 - kiem tra lai sau khi cap nhat WINDOWS_CERTIFICATE (PFX tu ky moi tao).
 
 name: Check PFX Secret
 
