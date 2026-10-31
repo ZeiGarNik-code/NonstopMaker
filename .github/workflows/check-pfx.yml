@@ -75,11 +75,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           FOUND_CERT=""
+          PRESENT_CERTS=""
           for n in "${CERT_NAMES[@]}"; do
             if [ -n "${!n:-}" ]; then
               echo "✅ $n : PRESENT"
               echo "| \`$n\` | ✅ PRESENT |" >> "$GITHUB_STEP_SUMMARY"
               [ -z "$FOUND_CERT" ] && FOUND_CERT="$n"
+              PRESENT_CERTS="${PRESENT_CERTS:+$PRESENT_CERTS,}$n"
             else
               echo "❌ $n : MISSING (không tồn tại hoặc rỗng)"
               echo "| \`$n\` | ❌ MISSING |" >> "$GITHUB_STEP_SUMMARY"
@@ -149,11 +151,13 @@ jobs:
           if [ "$parse_ok" != "1" ]; then
             echo "❌ Không mở được PKCS#12: sai mật khẩu, hoặc file không phải .pfx/.p12 hợp lệ"
             echo "- ❌ PKCS#12: **mở thất bại** (sai mật khẩu hoặc file hỏng/không phải PFX)" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=PFX-VALIDATION::pkcs12=FAIL wrong_password_or_not_a_pfx_file"
             rm -f /tmp/cert.pfx /tmp/cert.pem
             exit 0
           fi
           echo "✅ Mở PKCS#12 thành công (mật khẩu đúng)"
           echo "- ✅ PKCS#12: mở thành công, mật khẩu đúng" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=PFX-VALIDATION::pkcs12=OK password_correct"
 
           # 3) Có private key đi kèm không? (chỉ đếm, KHÔNG in key)
           KEY_COUNT=0
@@ -195,6 +199,7 @@ jobs:
         if: env.FOUND_CERT == ''
         shell: bash
         run: |
+          echo "::notice title=PFX-VALIDATION::result=NO_PFX_SECRET_FOUND"
           echo "❌ Không có bất kỳ secret PFX nào (trong danh sách ứng viên) trên repo này."
           echo "Nếu bạn tin chắc đã thêm, hãy kiểm tra: Settings -> Secrets and variables -> Actions"
           echo "và đối chiếu đúng tên secret, hoặc thêm tên đó vào workflow check-pfx.yml."
