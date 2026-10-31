@@ -1,0 +1,10 @@
+# --- Chứng chỉ / khóa bí mật: TUYỆT ĐỐI không commit ---
+*.pfx
+*.p12
+*.key
+private-key*.pem
+*-base64.txt
+*pfx-base64.txt
+base64cert.txt
+certificate/
+NonstopMaker-Cert/
