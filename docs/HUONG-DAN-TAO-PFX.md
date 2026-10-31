@@ -34,13 +34,15 @@ Get-ChildItem "$HOME" -Filter *.pfx -Recurse -ErrorAction SilentlyContinue |
 
 Script [`scripts/create-pfx.ps1`](../scripts/create-pfx.ps1) làm toàn bộ: tạo chứng chỉ ký mã (tự ký) → xuất `publisher.pfx` + `publisher.cer` → mã hóa base64 → tự kiểm tra lại mật khẩu/private key.
 
-**Bước 1 — Lấy repo về máy** (nếu chưa có):
+**Bước 1 — Lấy repo về máy** (nếu chưa có). Lưu ý clone **đúng branch** chứa script (chưa merge vào `main`):
 
 ```powershell
 cd $HOME
-git clone https://github.com/ZeiGarNik-code/NonstopMaker.git
+git clone -b arena/dd346b94-nonstopmaker https://github.com/ZeiGarNik-code/NonstopMaker.git
 cd NonstopMaker
 ```
+
+*(Nếu đã clone từ trước: `git fetch origin` rồi `git checkout arena/dd346b94-nonstopmaker`.)*
 
 **Bước 2 — Chạy script** (PowerShell thường, **không** cần quyền Admin):
 
