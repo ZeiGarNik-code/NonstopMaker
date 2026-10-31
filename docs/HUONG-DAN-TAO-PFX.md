@@ -34,7 +34,24 @@ Get-ChildItem "$HOME" -Filter *.pfx -Recurse -ErrorAction SilentlyContinue |
 
 Script [`scripts/create-pfx.ps1`](../scripts/create-pfx.ps1) làm toàn bộ: tạo chứng chỉ ký mã (tự ký) → xuất `publisher.pfx` + `publisher.cer` → mã hóa base64 → tự kiểm tra lại mật khẩu/private key.
 
-**Bước 1 — Lấy repo về máy** (nếu chưa có). Lưu ý clone **đúng branch** chứa script (chưa merge vào `main`):
+**Bước 1 — Lấy script về máy.** Chọn cách 1A nếu máy **chưa có Git** (lỗi `'git' is not recognized`), cách 1B nếu đã có Git. Lưu ý lấy đúng **branch** chứa script (chưa merge vào `main`).
+
+*Cách 1A — Tải ZIP, KHÔNG cần Git (khuyên dùng khi chưa cài Git):*
+
+Cách dễ nhất: mở trình duyệt vào
+<https://github.com/ZeiGarNik-code/NonstopMaker/archive/refs/heads/arena/dd346b94-nonstopmaker.zip>,
+tải về rồi chuột phải vào file ZIP → **Extract All...**
+
+Hoặc tải ngay trong PowerShell:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Invoke-WebRequest -UseBasicParsing "https://github.com/ZeiGarNik-code/NonstopMaker/archive/refs/heads/arena/dd346b94-nonstopmaker.zip" -OutFile "$HOME\NonstopMaker.zip"
+Expand-Archive "$HOME\NonstopMaker.zip" -DestinationPath "$HOME" -Force
+cd "$HOME\NonstopMaker-arena-dd346b94-nonstopmaker"
+```
+
+*Cách 1B — Clone bằng Git (máy đã cài Git):*
 
 ```powershell
 cd $HOME
@@ -42,7 +59,8 @@ git clone -b arena/dd346b94-nonstopmaker https://github.com/ZeiGarNik-code/Nonst
 cd NonstopMaker
 ```
 
-*(Nếu đã clone từ trước: `git fetch origin` rồi `git checkout arena/dd346b94-nonstopmaker`.)*
+*(Nếu đã clone từ trước: `git fetch origin` rồi `git checkout arena/dd346b94-nonstopmaker`.
+Muốn cài Git để dùng lâu dài: `winget install -e --id Git.Git`, sau đó **đóng và mở lại PowerShell**, kiểm tra bằng `git --version`.)*
 
 **Bước 2 — Chạy script** (PowerShell thường, **không** cần quyền Admin):
 
@@ -104,6 +122,7 @@ OpenSSL sẽ hỏi bạn đặt **Export Password** — đó là mật khẩu `.
 
 | Lỗi | Nguyên nhân & cách xử lý |
 |---|---|
+| `'git' is not recognized...` + `cd : Cannot find path ...\NonstopMaker` | Máy chưa cài Git nên clone thất bại → thư mục không được tạo ra, `cd` vào sẽ lỗi nối tiếp. Dùng **cách 1A (tải ZIP)** ở mục 3, hoặc cài Git: `winget install -e --id Git.Git` rồi mở lại PowerShell. |
 | `DirectoryNotFoundException` | Thư mục trong đường dẫn không tồn tại → dùng đường dẫn thật, hoặc chạy script mục 3 (tự tạo thư mục). Kiểm tra bằng `Test-Path`. |
 | `... cannot be loaded because running scripts is disabled` | Thêm `-ExecutionPolicy Bypass` như các lệnh mẫu trên (chỉ áp dụng cho lần chạy đó). |
 | `The specified network password is not correct` | Sai mật khẩu `.pfx`, hoặc 2 secret không cùng một cặp (cert của file A, mật khẩu của file B). |
