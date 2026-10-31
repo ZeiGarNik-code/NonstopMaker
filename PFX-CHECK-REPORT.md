@@ -70,6 +70,7 @@ Chạy lại workflow build Windows; artifact đúng kỳ vọng sẽ đổi th�
 | 01/11/2026 | Người dùng tạo chứng chỉ tự ký `CN=NonstopMaker` (RSA 3072, hạn 3 năm) và cập nhật lại 2 secret → kiểm tra lại **ĐẠT 14/14**, 2 lần liên tiếp |
 | 01/11/2026 | Phát hiện workflow build Windows dùng tên `WINDOWS_CSC_*` → người dùng tạo thêm cặp này với cùng giá trị → xác thực độc lập **ĐẠT** (24/24 status, trùng từng byte với `WINDOWS_CERTIFICATE`, mật khẩu CSC đúng). Bằng chứng: [run 41238238643](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41238238643) |
 | 01/11/2026 | Chạy lại build Windows ([run 41233135496 attempt 2](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41233135496)): mọi step ✅, artifact đổi thành **`NonstopMaker-Lite-Windows-signed`** (~225 MB) — ký Authenticode hoạt động đầu-cuối trên CI 🎉 |
+| 01/11/2026 | Xóa cảnh báo khai tử Node 20: nâng `actions/upload-artifact` @v4→@v6 trong workflow build (commit `b75ac8c`) và `actions/checkout` @v4→@v5 trong `blank.yml` (`8b87cb3`). Build mới ([run 41241643279](https://github.com/ZeiGarNik-code/NonstopMaker/actions/runs/41241643279)): 11/11 step ✅, **0 annotation**, artifact vẫn `signed` |
 
 ## Lưu ý lâu dài
 
@@ -90,4 +91,6 @@ Chạy lại workflow build Windows; artifact đúng kỳ vọng sẽ đổi th�
 | `b2a0230` | Cập nhật báo cáo: cặp `WINDOWS_CERTIFICATE*` đạt, cảnh báo lệch tên CSC |
 | `2e81d5f` | Trình kiểm tra mở thử độc lập cặp `WINDOWS_CSC_*` (kèm so trùng từng byte) → **ĐẠT 24/24** |
 | `7c68a77` | Chốt báo cáo: cả 2 cặp secret đều đạt, sẵn sàng build bản signed |
-| (commit này) | Ghi nhận build Windows đã ra artifact `signed` — hoàn tất toàn bộ quy trình PFX |
+| `ee786b7` | Ghi nhận build Windows đã ra artifact `signed` — hoàn tất toàn bộ quy trình PFX |
+| `8b87cb3` | Nâng `actions/checkout` lên @v5 (Node 24) trong `blank.yml` |
+| (commit này) | Ghi nhận build sạch cảnh báo Node 20 sau khi nâng `upload-artifact` lên @v6 |
