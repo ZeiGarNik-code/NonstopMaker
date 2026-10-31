@@ -7,10 +7,12 @@
 #   chứng chỉ (subject, issuer, hạn dùng, fingerprint) — thông tin này vốn
 #   đã công khai trên mọi file đã ký.
 # - File PFX tạm bị xóa ngay sau khi kiểm tra.
+# - Kết quả tóm tắt đồng thời được post lên Commit Status API (contexts
+#   `pfx/...`) để đọc được qua api.github.com mà không cần tải log.
 #
 # Cách dùng sau khi merge vào `main`:
 #   Actions tab -> "Check PFX Secret" -> Run workflow
-# Nếu bạn đã lưu secret với tên khác ngoài danh sách CANDIDATES bên dưới,
+# Nếu bạn đã lưu secret với tên khác ngoài danh sách ứng viên bên dưới,
 # hãy thêm tên đó vào cả khối `env:` lẫn mảng trong step kiểm tra.
 
 name: Check PFX Secret
@@ -23,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   check-pfx:
@@ -30,6 +33,7 @@ jobs:
     # Ánh xạ các tên secret ứng viên thường dùng cho PFX.
     # Secret không tồn tại sẽ là chuỗi rỗng -> báo MISSING.
     env:
+      GH_TOKEN: ${{ github.token }}
       # --- Ứng viên chứa chứng chỉ (thường là base64 của file .pfx/.p12) ---
       PFX: ${{ secrets.PFX }}
       PFX_BASE64: ${{ secrets.PFX_BASE64 }}
@@ -63,6 +67,17 @@ jobs:
         shell: bash
         run: |
           set +x
+          post_status() {
+            local ctx="$1" state="$2" desc="$3"
+            desc=$(printf '%s' "$desc" | tr '\n' ' ' | cut -c1-140)
+            if command -v gh >/dev/null 2>&1; then
+              gh api "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+                -f state="$state" -f context="$ctx" -f description="$desc" \
+                -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                >/dev/null 2>&1 || echo "WARN: post_status failed: $ctx"
+            fi
+          }
+
           CERT_NAMES=(PFX PFX_BASE64 PFX_CONTENT PFX_CERTIFICATE PFX_FILE CERT_PFX CERTIFICATE_PFX CERTIFICATE CERT CERT_BASE64 BASE64_ENCODED_PFX WINDOWS_CERTIFICATE WINDOWS_PFX SIGNING_CERTIFICATE SIGNING_PFX CODE_SIGNING_CERTIFICATE CODE_SIGNING_PFX SIGN_CERT)
           PASS_NAMES=(PFX_PASSWORD PFX_PASS CERT_PASSWORD CERT_PASS CERTIFICATE_PASSWORD SIGNING_CERTIFICATE_PASSWORD SIGNING_PASSWORD WINDOWS_CERTIFICATE_PASSWORD)
 
@@ -96,11 +111,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           FOUND_PASS=""
+          PRESENT_PASSES=""
           for n in "${PASS_NAMES[@]}"; do
             if [ -n "${!n:-}" ]; then
               echo "✅ $n : PRESENT"
               echo "| \`$n\` | ✅ PRESENT |" >> "$GITHUB_STEP_SUMMARY"
               [ -z "$FOUND_PASS" ] && FOUND_PASS="$n"
+              PRESENT_PASSES="${PRESENT_PASSES:+$PRESENT_PASSES,}$n"
             else
               echo "❌ $n : MISSING (không tồn tại hoặc rỗng)"
               echo "| \`$n\` | ❌ MISSING |" >> "$GITHUB_STEP_SUMMARY"
@@ -110,11 +127,33 @@ jobs:
           echo "FOUND_CERT=$FOUND_CERT" >> "$GITHUB_ENV"
           echo "FOUND_PASS=$FOUND_PASS" >> "$GITHUB_ENV"
 
+          if [ -n "$PRESENT_CERTS" ]; then
+            post_status "pfx/cert-present" "success" "cert_present=$PRESENT_CERTS"
+          else
+            post_status "pfx/cert-present" "failure" "cert_present=NONE"
+          fi
+          if [ -n "$PRESENT_PASSES" ]; then
+            post_status "pfx/pass-present" "success" "pass_present=$PRESENT_PASSES"
+          else
+            post_status "pfx/pass-present" "failure" "pass_present=NONE"
+          fi
+
       - name: Validate PFX file (base64 + PKCS#12 parse, public info only)
         if: env.FOUND_CERT != ''
         shell: bash
         run: |
           set +x
+          post_status() {
+            local ctx="$1" state="$2" desc="$3"
+            desc=$(printf '%s' "$desc" | tr '\n' ' ' | cut -c1-140)
+            if command -v gh >/dev/null 2>&1; then
+              gh api "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+                -f state="$state" -f context="$ctx" -f description="$desc" \
+                -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                >/dev/null 2>&1 || echo "WARN: post_status failed: $ctx"
+            fi
+          }
+
           echo "Dùng secret chứng chỉ: $FOUND_CERT"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Kiểm tra file PFX trong \`$FOUND_CERT\`" >> "$GITHUB_STEP_SUMMARY"
@@ -133,12 +172,14 @@ jobs:
           if ! printf '%s' "$CERT_VALUE" | tr -d '[:space:]' | base64 -d > /tmp/cert.pfx 2>/tmp/b64.err; then
             echo "❌ Secret KHÔNG phải base64 hợp lệ -> không giải mã ra file .pfx được"
             echo "- ❌ Base64: **không hợp lệ**" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/base64" "failure" "base64=INVALID found_cert=$FOUND_CERT"
             rm -f /tmp/cert.pfx
             exit 0
           fi
           SIZE=$(wc -c < /tmp/cert.pfx | tr -d ' ')
           echo "✅ Base64 hợp lệ, kích thước file PFX: ${SIZE} byte"
           echo "- ✅ Base64: hợp lệ (${SIZE} byte sau giải mã)" >> "$GITHUB_STEP_SUMMARY"
+          post_status "pfx/base64" "success" "base64=OK size_bytes=$SIZE pass_source=${FOUND_PASS:-EMPTY_PASSWORD}"
 
           # 2) Parse PKCS#12 (thử cả chế độ -legacy cho cert thuật toán cũ)
           parse_ok=0
@@ -151,13 +192,13 @@ jobs:
           if [ "$parse_ok" != "1" ]; then
             echo "❌ Không mở được PKCS#12: sai mật khẩu, hoặc file không phải .pfx/.p12 hợp lệ"
             echo "- ❌ PKCS#12: **mở thất bại** (sai mật khẩu hoặc file hỏng/không phải PFX)" >> "$GITHUB_STEP_SUMMARY"
-            echo "::notice title=PFX-VALIDATION::pkcs12=FAIL wrong_password_or_not_a_pfx_file"
+            post_status "pfx/pkcs12" "failure" "pkcs12=FAIL wrong_password_or_not_a_pfx_file"
             rm -f /tmp/cert.pfx /tmp/cert.pem
             exit 0
           fi
           echo "✅ Mở PKCS#12 thành công (mật khẩu đúng)"
           echo "- ✅ PKCS#12: mở thành công, mật khẩu đúng" >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=PFX-VALIDATION::pkcs12=OK password_correct"
+          post_status "pfx/pkcs12" "success" "pkcs12=OK password_correct"
 
           # 3) Có private key đi kèm không? (chỉ đếm, KHÔNG in key)
           KEY_COUNT=0
@@ -169,9 +210,11 @@ jobs:
           if [ "${KEY_COUNT:-0}" -gt 0 ]; then
             echo "✅ Có private key trong PFX (dùng để ký được)"
             echo "- ✅ Private key: có (ký được)" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/private-key" "success" "private_key=PRESENT can_sign=yes"
           else
             echo "⚠️ PFX chỉ chứa chứng chỉ, KHÔNG có private key -> không ký được"
             echo "- ⚠️ Private key: **không có** (không ký được)" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/private-key" "failure" "private_key=MISSING can_sign=no"
           fi
 
           # 4) Thông tin công khai + hạn dùng
@@ -183,12 +226,33 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+          SUBJECT=$(openssl x509 -in /tmp/cert.pem -noout -subject 2>/dev/null || true)
+          ISSUER=$(openssl x509 -in /tmp/cert.pem -noout -issuer 2>/dev/null || true)
+          DATES=$(openssl x509 -in /tmp/cert.pem -noout -dates 2>/dev/null | tr '\n' ' ' || true)
+          SERIAL=$(openssl x509 -in /tmp/cert.pem -noout -serial 2>/dev/null || true)
+          FPR=$(openssl x509 -in /tmp/cert.pem -noout -fingerprint -sha256 2>/dev/null || true)
+          post_status "pfx/cert-subject" "success" "$SUBJECT"
+          post_status "pfx/cert-issuer" "success" "$ISSUER"
+          post_status "pfx/cert-dates" "success" "$DATES"
+          post_status "pfx/cert-serial" "success" "$SERIAL"
+          post_status "pfx/cert-fingerprint" "success" "$FPR"
+
+          ENDDATE=$(openssl x509 -in /tmp/cert.pem -noout -enddate 2>/dev/null | cut -d= -f2- || true)
+          DAYS_LEFT="unknown"
+          if [ -n "$ENDDATE" ]; then
+            END_EPOCH=$(date -d "$ENDDATE" +%s 2>/dev/null || echo "")
+            if [ -n "$END_EPOCH" ]; then
+              DAYS_LEFT=$(( (END_EPOCH - $(date +%s)) / 86400 ))
+            fi
+          fi
           if openssl x509 -in /tmp/cert.pem -noout -checkend 0 >/dev/null; then
-            echo "✅ Chứng chỉ CÒN hạn"
-            echo "- ✅ Hiệu lực: **còn hạn**" >> "$GITHUB_STEP_SUMMARY"
+            echo "✅ Chứng chỉ CÒN hạn (còn ~${DAYS_LEFT} ngày)"
+            echo "- ✅ Hiệu lực: **còn hạn** (~${DAYS_LEFT} ngày)" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/expiry" "success" "expiry=STILL_VALID days_left=$DAYS_LEFT end=$ENDDATE"
           else
-            echo "❌ Chứng chỉ ĐÃ HẾT HẠN"
+            echo "❌ Chứng chỉ ĐÃ HẾT HẠN (${DAYS_LEFT} ngày)"
             echo "- ❌ Hiệu lực: **ĐÃ HẾT HẠN**" >> "$GITHUB_STEP_SUMMARY"
+            post_status "pfx/expiry" "failure" "expiry=EXPIRED days_left=$DAYS_LEFT end=$ENDDATE"
           fi
 
           # 5) Dọn dẹp ngay
@@ -199,7 +263,6 @@ jobs:
         if: env.FOUND_CERT == ''
         shell: bash
         run: |
-          echo "::notice title=PFX-VALIDATION::result=NO_PFX_SECRET_FOUND"
           echo "❌ Không có bất kỳ secret PFX nào (trong danh sách ứng viên) trên repo này."
           echo "Nếu bạn tin chắc đã thêm, hãy kiểm tra: Settings -> Secrets and variables -> Actions"
           echo "và đối chiếu đúng tên secret, hoặc thêm tên đó vào workflow check-pfx.yml."
