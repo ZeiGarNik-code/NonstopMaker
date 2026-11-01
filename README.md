@@ -13,6 +13,17 @@ npm run dev
 
 Open the Vite URL and choose **Mở demo** to preview the interface with synthetic metadata, or import local audio files/folders. Demo tracks contain metadata only and cannot be analyzed or rendered.
 
+## Text size / khả năng đọc
+
+The interface previously used hard-coded 5–8px text that could not be enlarged. Every size is now a scalable token:
+
+- Base sizes: 12px labels, 13px secondary text, 14px body, 15px titles — readable without zooming.
+- **Font size control** in the app bar (the `A−` / `A+` buttons) switches between **Nhỏ 90%**, **Vừa 100%**, **Lớn 115%** and **Rất lớn 130%**. The choice is saved in `localStorage` and restored on the next visit.
+- Tokens use `max(12px, …)` floors, so even the smallest labels stay legible at 90%.
+- Layouts reflow instead of clipping: the app bar wraps, table cells wrap, and the workflow nav shrinks to dots on narrow screens.
+
+The presets, persistence and storage fallbacks live in `src/nonstopmaker/fontScale.js` with unit tests.
+
 ## Progress tracking
 
 Every step shows a percentage so long imports and renders are easy to follow:

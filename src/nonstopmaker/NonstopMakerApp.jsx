@@ -64,6 +64,15 @@ import {
   describeActivity,
   WORKFLOW,
 } from './progress.js';
+import {
+  applyFontScale,
+  canDecreaseFontScale,
+  canIncreaseFontScale,
+  getFontScale,
+  readFontScale,
+  stepFontScale,
+  writeFontScale,
+} from './fontScale.js';
 import './nonstopmaker.css';
 
 const TRANSITIONS = ['Fade mềm', 'Cắt gọn'];
@@ -314,7 +323,39 @@ function SectionHeading({ number, title, description, accessory }) {
   );
 }
 
-function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport, stepPercents, overallPercent, activity }) {
+function FontSizeControl({ value, onChange }) {
+  const level = getFontScale(value);
+  return (
+    <div className="nsm-font-control" role="group" aria-label="Cỡ chữ">
+      <button
+        className="nsm-font-button"
+        type="button"
+        onClick={() => onChange(stepFontScale(value, -1))}
+        disabled={!canDecreaseFontScale(value)}
+        aria-label="Giảm cỡ chữ"
+        title="Giảm cỡ chữ"
+      >
+        <span className="nsm-font-glyph is-small" aria-hidden="true">A</span>
+      </button>
+      <span className="nsm-font-current" aria-live="polite">
+        <strong>{level.label}</strong>
+        <small>{level.hint}</small>
+      </span>
+      <button
+        className="nsm-font-button"
+        type="button"
+        onClick={() => onChange(stepFontScale(value, 1))}
+        disabled={!canIncreaseFontScale(value)}
+        aria-label="Tăng cỡ chữ"
+        title="Tăng cỡ chữ"
+      >
+        <span className="nsm-font-glyph is-large" aria-hidden="true">A</span>
+      </button>
+    </div>
+  );
+}
+
+function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport, stepPercents, overallPercent, activity, fontScale, onFontScale }) {
   const currentIndex = WORKFLOW.findIndex((stage) => stage.id === screen);
   return (
     <header className="nsm-topbar">
@@ -374,6 +415,7 @@ function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onEx
             </div>
           )}
         </div>
+        <FontSizeControl value={fontScale} onChange={onFontScale} />
         <button className={`nsm-simple-toggle ${simpleMode ? 'is-on' : ''}`} type="button" onClick={() => setSimpleMode(!simpleMode)} aria-pressed={simpleMode}>
           <span className="nsm-toggle-dot" />
           <span>Đơn giản</span>
@@ -867,6 +909,7 @@ function NonstopMakerApp() {
   const [setName, setSetName] = useState('Nonstop · Bản mix mới');
   const [search, setSearch] = useState('');
   const [simpleMode, setSimpleMode] = useState(true);
+  const [fontScale, setFontScale] = useState(() => readFontScale(typeof window === 'undefined' ? null : window.localStorage));
   const [transition, setTransition] = useState('Fade mềm');
   const [crossfade, setCrossfade] = useState(8);
   const [volume, setVolume] = useState(82);
@@ -903,6 +946,11 @@ function NonstopMakerApp() {
       folderInput.setAttribute('directory', '');
     }
   }, []);
+
+  useEffect(() => {
+    applyFontScale(document.documentElement, fontScale);
+    writeFontScale(window.localStorage, fontScale);
+  }, [fontScale]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1367,6 +1415,8 @@ function NonstopMakerApp() {
         stepPercents={stepPercents}
         overallPercent={overallPercent}
         activity={activity}
+        fontScale={fontScale}
+        onFontScale={setFontScale}
       />
       <StepProgressCard progress={stepProgress} activity={activity} />
 
