@@ -1,0 +1,76 @@
+name: Build NonstopMaker for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+    paths:
+      - '.github/workflows/build-windows-app.yml'
+      - 'electron/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - 'public/**'
+      - 'vite.config.js'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    env:
+      WINDOWS_CSC_PFX_BASE64: ${{ secrets.WINDOWS_CSC_PFX_BASE64 }}
+      WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run unit tests
+        run: npm test
+      - name: Configure optional Authenticode signing
+        id: signing
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_KEY_PASSWORD)) {
+            Write-Warning 'Signing certificate secrets are not configured; building unsigned executables.'
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'mode=unsigned' -Encoding utf8
+            exit 0
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'nonstopmaker-code-signing.pfx'
+          $certificateBytes = [Convert]::FromBase64String($env:WINDOWS_CSC_PFX_BASE64)
+          [System.IO.File]::WriteAllBytes($certificatePath, $certificateBytes)
+          Add-Content -Path $env:GITHUB_ENV -Value "CSC_LINK=$certificatePath" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "CSC_KEY_PASSWORD=$env:WINDOWS_CSC_KEY_PASSWORD" -Encoding utf8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'mode=signed' -Encoding utf8
+      - name: Build installer and portable app
+        shell: pwsh
+        run: |
+          $logPath = Join-Path $env:RUNNER_TEMP 'nonstopmaker-package.log'
+          npm run package:win 2>&1 | Tee-Object -FilePath $logPath
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            $tail = ((Get-Content $logPath | Select-Object -Last 12) -join ' | ')
+            $tail = [regex]::Replace($tail, '\x1B\[[0-?]*[ -/]*[@-~]', '')
+            if ($tail.Length -gt 6000) { $tail = $tail.Substring($tail.Length - 6000) }
+            $annotation = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows package failed::$annotation"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ("## Windows package failed`n`n````text`n$tail`n````") -Encoding utf8
+            exit $buildExitCode
+          }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '## Windows installer and portable executable built successfully.' -Encoding utf8
+      - name: Upload Windows executables
+        uses: actions/upload-artifact@v6
+        with:
+          name: NonstopMaker-Lite-Windows-${{ steps.signing.outputs.mode }}
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
