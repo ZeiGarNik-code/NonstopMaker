@@ -21,6 +21,7 @@ import {
   Headphones,
   Info,
   ListMusic,
+  Lock,
   Menu,
   MoreHorizontal,
   MoveDown,
@@ -64,6 +65,15 @@ import {
   describeActivity,
   WORKFLOW,
 } from './progress.js';
+import {
+  applyFontScale,
+  canDecreaseFontScale,
+  canIncreaseFontScale,
+  getFontScale,
+  readFontScale,
+  stepFontScale,
+  writeFontScale,
+} from './fontScale.js';
 import './nonstopmaker.css';
 
 const TRANSITIONS = ['Fade mềm', 'Cắt gọn'];
@@ -314,7 +324,39 @@ function SectionHeading({ number, title, description, accessory }) {
   );
 }
 
-function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport, stepPercents, overallPercent, activity }) {
+function FontSizeControl({ value, onChange }) {
+  const level = getFontScale(value);
+  return (
+    <div className="nsm-font-control" role="group" aria-label="Cỡ chữ">
+      <button
+        className="nsm-font-button"
+        type="button"
+        onClick={() => onChange(stepFontScale(value, -1))}
+        disabled={!canDecreaseFontScale(value)}
+        aria-label="Giảm cỡ chữ"
+        title="Giảm cỡ chữ"
+      >
+        <span className="nsm-font-glyph is-small" aria-hidden="true">A</span>
+      </button>
+      <span className="nsm-font-current" aria-live="polite">
+        <strong>{level.label}</strong>
+        <small>{level.hint}</small>
+      </span>
+      <button
+        className="nsm-font-button"
+        type="button"
+        onClick={() => onChange(stepFontScale(value, 1))}
+        disabled={!canIncreaseFontScale(value)}
+        aria-label="Tăng cỡ chữ"
+        title="Tăng cỡ chữ"
+      >
+        <span className="nsm-font-glyph is-large" aria-hidden="true">A</span>
+      </button>
+    </div>
+  );
+}
+
+function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport, stepPercents, overallPercent, activity, fontScale, onFontScale }) {
   const currentIndex = WORKFLOW.findIndex((stage) => stage.id === screen);
   return (
     <header className="nsm-topbar">
@@ -374,6 +416,7 @@ function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onEx
             </div>
           )}
         </div>
+        <FontSizeControl value={fontScale} onChange={onFontScale} />
         <button className={`nsm-simple-toggle ${simpleMode ? 'is-on' : ''}`} type="button" onClick={() => setSimpleMode(!simpleMode)} aria-pressed={simpleMode}>
           <span className="nsm-toggle-dot" />
           <span>Đơn giản</span>
@@ -673,6 +716,17 @@ function EditorScreen({
   setAlignFadeToBpm,
   normalizeAudio,
   setNormalizeAudio,
+  bassSwap,
+  setBassSwap,
+  beatAlign,
+  setBeatAlign,
+  tempoSync,
+  setTempoSync,
+  keyLock,
+  setKeyLock,
+  autoCue,
+  setAutoCue,
+  onCueChange,
   simpleMode,
   onArrange,
   onBack,
@@ -790,6 +844,38 @@ function EditorScreen({
             <div className="nsm-control-row"><div><strong>Tự cân bằng âm</strong><small>Chuẩn hóa RMS từng track khi render</small></div><button className={`nsm-switch ${normalizeAudio ? 'is-on' : ''}`} type="button" role="switch" aria-checked={normalizeAudio} onClick={() => setNormalizeAudio(!normalizeAudio)}><i /></button></div>
           </div>
 
+          <div className="nsm-panel nsm-dj-panel">
+            <div className="nsm-edit-controls-title"><span><SlidersHorizontal size={15} /> KỸ NĂNG DJ</span><span className="nsm-panel-dot" /></div>
+            <div className="nsm-control-row"><div><strong>Bass swap (EQ 3 band)</strong><small>Cắt bass bài ra trước khi mở bass bài vào — hết đục tiếng</small></div><button className={`nsm-switch ${bassSwap ? 'is-on' : ''}`} type="button" role="switch" aria-checked={bassSwap} aria-label="Bass swap" onClick={() => setBassSwap(!bassSwap)}><i /></button></div>
+            <div className="nsm-control-row"><div><strong>Beat-align tự động</strong><small>Fade vào đúng downbeat, dài nguyên số ô nhịp</small></div><button className={`nsm-switch ${beatAlign ? 'is-on' : ''}`} type="button" role="switch" aria-checked={beatAlign} aria-label="Beat-align tự động" onClick={() => setBeatAlign(!beatAlign)}><i /></button></div>
+            <div className="nsm-control-row"><div><strong>Tempo sync (±6%)</strong><small>Kéo tempo bài vào khớp bài trước; lệch quá 6% sẽ giữ nguyên</small></div><button className={`nsm-switch ${tempoSync ? 'is-on' : ''}`} type="button" role="switch" aria-checked={tempoSync} aria-label="Tempo sync" onClick={() => setTempoSync(!tempoSync)}><i /></button></div>
+            <div className="nsm-control-row"><div><strong>Key lock</strong><small>Giữ nguyên cao độ khi đổi tempo — giọng hát không bị méo (chậm hơn khi render)</small></div><button className={`nsm-switch ${keyLock ? 'is-on' : ''}`} type="button" role="switch" aria-checked={keyLock} aria-label="Key lock" disabled={!tempoSync} onClick={() => setKeyLock(!keyLock)}><i /></button></div>
+            <div className="nsm-control-row"><div><strong>Điểm vào tự động</strong><small>Tự canh cue-in vào ô nhịp đầu tiên</small></div><button className={`nsm-switch ${autoCue ? 'is-on' : ''}`} type="button" role="switch" aria-checked={autoCue} aria-label="Điểm vào tự động" onClick={() => setAutoCue(!autoCue)}><i /></button></div>
+            {activeTrack && (
+              <div className="nsm-cue-editor">
+                <div className="nsm-cue-head"><span>CUE POINT · {activeTrack.title}</span><small>{(activeTrack.cueIn > 0 || activeTrack.cueOut > 0) ? 'THỦ CÔNG' : 'AUTO'}</small></div>
+                {[['cueIn', 'Vào'], ['cueOut', 'Ra']].map(([field, text]) => (
+                  <div className="nsm-cue-row" key={field}>
+                    <label htmlFor={`cue-${field}`}>{text}</label>
+                    <input
+                      id={`cue-${field}`}
+                      type="range"
+                      min={0}
+                      max={Math.max(1, Math.floor(activeTrack.duration || 1))}
+                      step={1}
+                      value={Math.round(field === 'cueIn' ? (activeTrack.cueIn || 0) : (activeTrack.cueOut || activeTrack.duration || 0))}
+                      onChange={(event) => onCueChange(activeTrack.id, field, Number(event.target.value))}
+                      aria-label={`${text} của ${activeTrack.title}`}
+                    />
+                    <span>{formatTime(field === 'cueIn' ? (activeTrack.cueIn || 0) : (activeTrack.cueOut || activeTrack.duration || 0))}</span>
+                    <button type="button" className="nsm-cue-reset" onClick={() => onCueChange(activeTrack.id, 'reset', 0)} aria-label={`Xoá cue point của ${activeTrack.title}`}>Auto</button>
+                  </div>
+                ))}
+                <p className="nsm-cue-hint">Kéo 2 thanh để chọn đoạn vào/ra · <b>Auto</b> để mixer tự canh theo phách.</p>
+              </div>
+            )}
+          </div>
+
           <div className="nsm-device-card"><div className="nsm-device-icon"><Headphones size={17} /></div><div><strong>Đầu ra âm thanh</strong><small>{activeTrack?.file ? 'Trình duyệt · tệp cục bộ' : 'Chưa chọn tệp audio thật'}</small></div><button type="button" className="nsm-icon-button" aria-label="Cài đặt đầu ra"><ChevronDown size={15} /></button></div>
         </aside>
       </div>
@@ -810,6 +896,11 @@ function ExportScreen({
   setBitrate,
   alignFadeToBpm,
   normalizeAudio,
+  bassSwap,
+  beatAlign,
+  tempoSync,
+  keyLock,
+  autoCue,
   renderState,
   canRender,
   onRenderMp3,
@@ -833,7 +924,7 @@ function ExportScreen({
           <p>{selectedTracks.length} bài được xếp theo thứ tự hiện tại; MP3 sẽ được mã hóa ngay trên thiết bị.</p>
           <div className="nsm-export-stats"><div><small>TRACKS</small><strong>{selectedTracks.length}</strong></div><div><small>THỜI LƯỢNG GỐC</small><strong>{totalDuration ? formatTime(totalDuration) : 'Đang đo'}</strong></div><div><small>BITRATE</small><strong>{bitrate} kbps</strong></div></div>
           <label className="nsm-input-label" htmlFor="export-name">TÊN FILE ĐẦU RA</label><div className="nsm-name-input-wrap"><Save size={15} /><input id="export-name" value={setName} onChange={(event) => setSetName(event.target.value)} maxLength={54} /><span>.mp3</span></div>
-          <div className="nsm-export-disclaimer"><Info size={15} /><span><strong>Render MP3 thật, xử lý cục bộ.</strong> Không gửi nhạc lên máy chủ. Crossfade là equal-power; đây chưa phải time-stretch / beatmatch kiểu DJ chuyên nghiệp.</span></div>
+          <div className="nsm-export-disclaimer"><Info size={15} /><span><strong>Render MP3 thật, xử lý cục bộ.</strong> Không gửi nhạc lên máy chủ. Mixer tự beat-align, bass swap và tempo sync trong ±6% (kèm key lock giữ nguyên cao độ); bài lệch quá ±6% sẽ được nối ở tempo gốc.</span></div>
         </section>
         <aside className="nsm-export-options">
           <div className="nsm-panel nsm-export-option-panel"><span className="nsm-eyebrow">AUDIO MASTER</span><h3>Tạo file MP3</h3>
@@ -843,7 +934,27 @@ function ExportScreen({
             {!canRender && !isRendering && <div className="nsm-render-hint"><Info size={14} /> Cần chọn tệp audio thật; dữ liệu demo không chứa nhạc để render.</div>}
             {renderState?.status === 'done' && <div className="nsm-render-success"><CheckCircle2 size={15} /><span><strong>{renderState.downloaded ? 'MP3 đã tải xuống' : 'MP3 render xong'}</strong><small>{formatTime(renderState.duration)} · {renderState.fileSizeLabel} · {renderState.sampleRate} Hz</small></span>{renderState.blob && <button className="nsm-download-mp3" type="button" onClick={onDownloadMp3}><Download size={13} /> Tải MP3</button>}</div>}
             {renderState?.status === 'error' && <div className="nsm-render-error"><Info size={14} />{renderState.message}</div>}
-            <div className="nsm-render-options-caption"><span><Check size={11} /> {transition === 'Cắt gọn' ? 'Không crossfade' : `Crossfade ${crossfade}s`}</span>{transition !== 'Cắt gọn' && <span><Check size={11} /> {alignFadeToBpm ? 'Fade theo BPM đo được' : 'Fade cố định'}</span>}<span><Check size={11} /> {normalizeAudio ? 'Cân bằng RMS' : 'Không chuẩn hóa'}</span></div>
+            {renderState?.status === 'done' && Array.isArray(renderState.mixReport) && renderState.mixReport.length > 0 && (
+              <details className="nsm-mix-report">
+                <summary>Báo cáo mix · {renderState.mixReport.length} bài</summary>
+                <table>
+                  <thead><tr><th>#</th><th>Bài</th><th>BPM</th><th>Tempo</th><th>Cue vào/ra</th><th>EQ</th></tr></thead>
+                  <tbody>
+                    {renderState.mixReport.map((row, index) => (
+                      <tr key={row.id || index}>
+                        <td>{String(index + 1).padStart(2, '0')}</td>
+                        <td title={row.title}>{row.title}</td>
+                        <td>{row.bpm ?? '—'}{row.targetBpm && row.targetBpm !== row.bpm ? ` → ${row.targetBpm}` : ''}</td>
+                        <td className="nsm-tempo-cell">{row.tempoSynced ? <>{row.tempoRatio > 0 ? '+' : ''}{(row.tempoRatio * 100).toFixed(1)}%{row.keyLock && <span className="nsm-keylock-badge" title="Key lock bật: cao độ được giữ nguyên"><Lock size={10} /> lock</span>}</> : row.tempoOutOfRange ? 'ngoài ±6%' : '—'}</td>
+                        <td>{formatTime(row.cueIn)}–{formatTime(row.cueOut)}</td>
+                        <td>{row.bassSwap ? 'swap' : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            )}
+            <div className="nsm-render-options-caption"><span><Check size={11} /> {transition === 'Cắt gọn' ? 'Không crossfade' : `Crossfade ${crossfade}s`}</span>{transition !== 'Cắt gọn' && <span><Check size={11} /> {beatAlign ? 'Beat-align theo ô nhịp' : alignFadeToBpm ? 'Fade theo BPM' : 'Fade cố định'}</span>}<span><Check size={11} /> {bassSwap ? 'Bass swap EQ 3 band' : 'Không bass swap'}</span><span><Check size={11} /> {tempoSync ? `Tempo sync ±6%${keyLock ? ' · key lock' : ''}` : 'Không tempo sync'}</span><span><Check size={11} /> {autoCue ? 'Cue tự động' : 'Cue thủ công'}</span><span><Check size={11} /> {normalizeAudio ? 'Cân bằng RMS' : 'Không chuẩn hóa'}</span></div>
             <div className="nsm-render-hint"><Info size={14} /> Giới hạn render: 120 MB / track, 15 phút / track, tối đa 120 phút / set. Định dạng giải mã tùy trình duyệt.</div>
             <div className="nsm-export-divider" />
             <button className="nsm-export-option" type="button" onClick={onExportM3U}><span className="nsm-export-file-icon"><ListMusic size={18} /></span><span><strong>Playlist M3U8</strong><small>Mở trong phần mềm nghe nhạc / DJ</small></span><span className="nsm-export-size">~1 KB <Download size={15} /></span></button>
@@ -867,11 +978,18 @@ function NonstopMakerApp() {
   const [setName, setSetName] = useState('Nonstop · Bản mix mới');
   const [search, setSearch] = useState('');
   const [simpleMode, setSimpleMode] = useState(true);
+  const [fontScale, setFontScale] = useState(() => readFontScale(typeof window === 'undefined' ? null : window.localStorage));
   const [transition, setTransition] = useState('Fade mềm');
   const [crossfade, setCrossfade] = useState(8);
   const [volume, setVolume] = useState(82);
   const [alignFadeToBpm, setAlignFadeToBpm] = useState(true);
   const [normalizeAudio, setNormalizeAudio] = useState(true);
+  const [bassSwap, setBassSwap] = useState(true);
+  const [beatAlign, setBeatAlign] = useState(true);
+  const [tempoSync, setTempoSync] = useState(true);
+  const [keyLock, setKeyLock] = useState(true);
+  const [autoCue, setAutoCue] = useState(true);
+  const [mixReport, setMixReport] = useState(null);
   const [mp3Bitrate, setMp3Bitrate] = useState(192);
   const [analysisState, setAnalysisState] = useState({ status: 'idle', progress: 0 });
   const [renderState, setRenderState] = useState({ status: 'idle', progress: 0 });
@@ -903,6 +1021,11 @@ function NonstopMakerApp() {
       folderInput.setAttribute('directory', '');
     }
   }, []);
+
+  useEffect(() => {
+    applyFontScale(document.documentElement, fontScale);
+    writeFontScale(window.localStorage, fontScale);
+  }, [fontScale]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1157,6 +1280,8 @@ function NonstopMakerApp() {
     setRenderState({ status: 'running', progress: 0, phaseLabel: 'Đang khởi tạo MP3 encoder…', trackCount: selectedTracks.length, trackIndex: 0 });
     const phaseLabels = {
       decode: 'Đang giải mã audio…',
+      tempo: 'Đang đồng bộ tempo…',
+      cue: 'Đang canh điểm vào theo phách…',
       normalize: 'Đang cân bằng âm lượng…',
       encode: 'Đang mã hóa MP3…',
       'track-done': 'Đã trộn xong track…',
@@ -1169,6 +1294,11 @@ function NonstopMakerApp() {
         bitrate: mp3Bitrate,
         alignFadeToBpm,
         normalizeAudio,
+        bassSwap,
+        beatAlign,
+        tempoSync,
+        keyLock,
+        autoCue,
         signal: controller.signal,
         onProgress: (progress) => {
           const track = selectedTracks[progress.trackIndex] || null;
@@ -1192,7 +1322,8 @@ function NonstopMakerApp() {
       const fileSizeLabel = result.blob.size >= 1024 * 1024
         ? `${(result.blob.size / (1024 * 1024)).toFixed(1)} MB`
         : `${Math.max(1, Math.round(result.blob.size / 1024))} KB`;
-      setRenderState({ status: 'done', progress: 100, duration: result.duration, fileSizeLabel, sampleRate: result.sampleRate, bitrate: result.bitrate, blob: result.blob, downloaded: false });
+      setMixReport(result.mixReport || null);
+      setRenderState({ status: 'done', progress: 100, duration: result.duration, fileSizeLabel, sampleRate: result.sampleRate, bitrate: result.bitrate, blob: result.blob, downloaded: false, mixReport: result.mixReport || null });
       showToast(`MP3 đã render · ${formatTime(result.duration)} · bấm Tải MP3 để lưu file.`);
     } catch (error) {
       const cancelled = controller.signal.aborted || error?.name === 'AbortError';
@@ -1229,6 +1360,22 @@ function NonstopMakerApp() {
     setPlayhead(0);
     setIsPlaying(false);
     if (audioRef.current && !audioRef.current.paused) audioRef.current.pause();
+  }
+
+  function updateCue(trackId, field, value) {
+    setTracks((current) => current.map((track) => {
+      if (track.id !== trackId) return track;
+      const duration = track.duration || 0;
+      if (field === 'reset') return { ...track, cueIn: null, cueOut: null };
+      if (field === 'cueIn') {
+        const cueIn = Math.max(0, Math.min(Number(value) || 0, Math.max(0, duration - 1)));
+        const cueOut = track.cueOut && track.cueOut > cueIn ? track.cueOut : null;
+        return { ...track, cueIn, cueOut };
+      }
+      const cueOut = Math.max(0, Math.min(Number(value) || 0, duration));
+      const cueIn = track.cueIn && track.cueIn < cueOut ? track.cueIn : 0;
+      return { ...track, cueIn, cueOut };
+    }));
   }
 
   function moveTrack(index, direction) {
@@ -1313,6 +1460,11 @@ function NonstopMakerApp() {
       crossfadeSeconds: crossfade,
       alignFadeToBpm,
       normalizeAudio,
+      bassSwap,
+      beatAlign,
+      tempoSync,
+      keyLock,
+      autoCue,
       bitrateKbps: mp3Bitrate,
       styles: selectedStyles,
       genres: selectedGenres,
@@ -1367,6 +1519,8 @@ function NonstopMakerApp() {
         stepPercents={stepPercents}
         overallPercent={overallPercent}
         activity={activity}
+        fontScale={fontScale}
+        onFontScale={setFontScale}
       />
       <StepProgressCard progress={stepProgress} activity={activity} />
 
@@ -1439,6 +1593,17 @@ function NonstopMakerApp() {
           setAlignFadeToBpm={setAlignFadeToBpm}
           normalizeAudio={normalizeAudio}
           setNormalizeAudio={setNormalizeAudio}
+          bassSwap={bassSwap}
+          setBassSwap={setBassSwap}
+          beatAlign={beatAlign}
+          setBeatAlign={setBeatAlign}
+          tempoSync={tempoSync}
+          setTempoSync={setTempoSync}
+          keyLock={keyLock}
+          setKeyLock={setKeyLock}
+          autoCue={autoCue}
+          setAutoCue={setAutoCue}
+          onCueChange={updateCue}
           simpleMode={simpleMode}
           onArrange={autoArrange}
           onBack={() => setScreen('arrange')}
@@ -1463,6 +1628,11 @@ function NonstopMakerApp() {
           setBitrate={setMp3Bitrate}
           alignFadeToBpm={alignFadeToBpm}
           normalizeAudio={normalizeAudio}
+          bassSwap={bassSwap}
+          beatAlign={beatAlign}
+          tempoSync={tempoSync}
+          keyLock={keyLock}
+          autoCue={autoCue}
           renderState={renderState}
           canRender={selectedTracks.length > 0 && selectedTracks.every((track) => Boolean(track.file))}
           onRenderMp3={renderSelectedMix}
