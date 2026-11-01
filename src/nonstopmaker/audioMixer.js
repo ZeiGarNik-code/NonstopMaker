@@ -1,4 +1,17 @@
 import { extractWaveform } from './waveform.js';
+import {
+  bassSwapGains,
+  beatOffset,
+  estimateDownbeat,
+  foldTempo,
+  mixBands,
+  onsetEnvelope,
+  planTempoSync,
+  resampleLinear,
+  resolveCueWindow,
+  snapToBar,
+  splitBands,
+} from './djDsp.js';
 
 const MAX_SOURCE_FILE_BYTES = 120 * 1024 * 1024;
 const MAX_TRACK_SECONDS = 15 * 60;
@@ -117,14 +130,17 @@ export function mixOverlap(outLeft, outRight, inLeft, inRight, count) {
   return { left, right };
 }
 
-export function getTransitionFrames(outgoing, incoming, seconds, sampleRate, alignFadeToBpm) {
+export function getTransitionFrames(outgoing, incoming, seconds, sampleRate, alignFadeToBpm, beatsPerBar = 0) {
   let fadeSeconds = Math.max(0, Number(seconds) || 0);
   if (alignFadeToBpm) {
     const bpms = [outgoing?.bpm, incoming?.bpm].filter((value) => Number.isFinite(value) && value >= 50 && value <= 220);
     if (bpms.length) {
       const bpm = bpms.reduce((sum, value) => sum + value, 0) / bpms.length;
-      const beatCount = Math.max(1, Math.round(fadeSeconds * bpm / 60));
-      fadeSeconds = beatCount * 60 / bpm;
+      // beatsPerBar = 4 rounds the fade to whole bars (musical phrases);
+      // 0 rounds to single beats, which is the older behaviour.
+      const unit = beatsPerBar >= 4 ? 4 : 1;
+      const unitCount = Math.max(1, Math.round(fadeSeconds * bpm / 60 / unit));
+      fadeSeconds = unitCount * unit * 60 / bpm;
     }
   }
   return Math.round(fadeSeconds * sampleRate);
@@ -158,6 +174,12 @@ export async function renderMixToMp3(tracks, {
   bitrate = 192,
   alignFadeToBpm = true,
   normalizeAudio = true,
+  bassSwap = true,
+  beatAlign = true,
+  tempoSync = true,
+  tempoSyncLimit = 0.06,
+  autoCue = true,
+  autoCueBeats = 16,
   signal,
   onProgress,
   onTrackDuration,
@@ -184,6 +206,10 @@ export async function renderMixToMp3(tracks, {
   let totalDecodedSeconds = 0;
   let totalEncodedFrames = 0;
   let encoderReady = false;
+  // Bookkeeping for the mix report returned to the UI (and written to the JSON plan).
+  const mixReport = [];
+  let previousTrackMeta = null;
+  let runningCueOut = 0;
 
   async function encodePcm(left, right, trackIndex, trackFrameCount) {
     if (!left.length) return;
@@ -225,20 +251,94 @@ export async function renderMixToMp3(tracks, {
       onTrackDuration?.(track.id, decoded.duration, decoded.sampleRate);
       onTrackWaveform?.(track.id, extractWaveform(decoded));
 
-      const left = decoded.getChannelData(0);
-      let right = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : left;
-      if (normalizeAudio && right === left) right = left.slice();
-      const frameCount = decoded.length;
-      const fadeInFrames = index > 0
-        ? getTransitionFrames(sources[index - 1], track, crossfadeSeconds, sampleRate, alignFadeToBpm)
-        : 0;
-      const fadeOutFrames = index < sources.length - 1
-        ? getTransitionFrames(track, sources[index + 1], crossfadeSeconds, sampleRate, alignFadeToBpm)
-        : 0;
+      const decodedLeft = decoded.getChannelData(0);
+      let decodedRight = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : decodedLeft;
+      if (decodedRight === decodedLeft) decodedRight = decodedLeft.slice();
+
+      // ---- Cue window -------------------------------------------------
+      const cue = resolveCueWindow(track, decoded.duration, decoded.length);
+      let left = decodedLeft.subarray(cue.startFrames, cue.endFrames);
+      let right = decodedRight.subarray(cue.startFrames, cue.endFrames);
+      let effectiveSampleRate = sampleRate;
+
+      // ---- Tempo sync (pitch/tempo shift) ------------------------------
+      const incomingBpm = Number(track.bpm) > 40 ? Number(track.bpm) : Number.NaN;
+      const outgoingBpm = Number(previousTrackMeta?.bpm) > 40 ? Number(previousTrackMeta.bpm) : Number.NaN;
+      const tempoPlan = tempoSync && Number.isFinite(outgoingBpm) && Number.isFinite(incomingBpm)
+        ? planTempoSync(outgoingBpm, incomingBpm, tempoSyncLimit)
+        : { playable: false, ratio: null, withinLimit: false, reason: 'Tempo sync tắt hoặc thiếu BPM' };
+      let appliedRatio = 1;
+      if (tempoPlan.playable && tempoPlan.withinLimit && Math.abs(tempoPlan.ratio) > 0.0008) {
+        // planTempoSync returns how much faster the incoming track already is
+        // (+3.2% for 128 against 124), so it must be resampled by the inverse:
+        // a longer buffer plays back slower and lands on the outgoing tempo.
+        appliedRatio = 1 + tempoPlan.ratio;
+        const resampleRatio = 1 / appliedRatio;
+        left = resampleLinear(left, resampleRatio);
+        right = resampleLinear(right, resampleRatio);
+        onProgress?.({ phase: 'tempo', progress: Math.round(10 + (index / sources.length) * 70), trackIndex: index, trackCount: sources.length, ratio: appliedRatio });
+      }
+
+      const frameCount = left.length;
+
+      // ---- Beat grid + auto cue (mix-in on a downbeat) ------------------
+      let onset = null;
+      let grid = null;
+      if (beatAlign || autoCue) {
+        const analysis = onsetEnvelope(left, effectiveSampleRate);
+        onset = analysis;
+        if (Number.isFinite(incomingBpm)) {
+          grid = estimateDownbeat(analysis.envelope, analysis.frameRate, incomingBpm * appliedRatio);
+        }
+      }
+      if (autoCue && grid) {
+        const target = beatOffset(cue.startSeconds, autoCueBeats, incomingBpm * appliedRatio) - cue.startSeconds;
+        const snapped = snapToBar(Math.max(0, target), grid, { bars: 1 });
+        if (snapped > 0 && snapped < cue.endSeconds - cue.startSeconds - 4) {
+          onProgress?.({ phase: 'cue', progress: Math.round(11 + (index / sources.length) * 70), trackIndex: index, trackCount: sources.length, cueIn: cue.startSeconds + snapped });
+        }
+      }
+
       if (normalizeAudio) {
         const gain = normalizeChannels(left, right);
         onProgress?.({ phase: 'normalize', progress: Math.round(8 + (index / sources.length) * 72), trackIndex: index, trackCount: sources.length, gain });
       }
+
+      // ---- Transition length ------------------------------------------
+      const beatAlignedFade = beatAlign ? 1 : 0;
+      let fadeInFrames = index > 0
+        ? getTransitionFrames(sources[index - 1], track, crossfadeSeconds, sampleRate, alignFadeToBpm, beatAlignedFade)
+        : 0;
+      let fadeOutFrames = index < sources.length - 1
+        ? getTransitionFrames(track, sources[index + 1], crossfadeSeconds, sampleRate, alignFadeToBpm, beatAlignedFade)
+        : 0;
+      if (beatAlign && grid) {
+        fadeInFrames = Math.round(snapToBar(fadeInFrames / sampleRate, grid, { bars: 1 }) * sampleRate) || fadeInFrames;
+      }
+
+      // ---- EQ bands for the bass swap ---------------------------------
+      const needsBands = bassSwap && (index > 0 || index < sources.length - 1);
+      const bands = needsBands ? splitBands(left, right, effectiveSampleRate, {}) : null;
+
+      const entry = {
+        id: track.id,
+        title: track.title,
+        bpm: Number.isFinite(incomingBpm) && incomingBpm > 40 ? Math.round(incomingBpm * 10) / 10 : null,
+        targetBpm: Number.isFinite(outgoingBpm) && tempoPlan.withinLimit ? Math.round(foldTempo(outgoingBpm, incomingBpm) * 10) / 10 : null,
+        tempoRatio: appliedRatio === 1 ? null : Math.round((appliedRatio - 1) * 10000) / 10000,
+        tempoSynced: appliedRatio !== 1,
+        tempoOutOfRange: Boolean(tempoPlan.playable && tempoPlan.outOfRange),
+        tempoReason: tempoPlan.reason || null,
+        cueIn: Math.round(cue.startSeconds * 100) / 100,
+        cueOut: Math.round(cue.endSeconds * 100) / 100,
+        cueSource: (Number(track.cueIn) > 0 || Number(track.cueOut) > 0) ? 'manual' : 'auto',
+        beatAligned: Boolean(beatAlign && grid),
+        downbeatSeconds: grid ? Math.round(grid.firstBeatSeconds * 1000) / 1000 : null,
+        bassSwap: Boolean(bassSwap && index > 0),
+        durationAfterCue: Math.round((cue.endSeconds - cue.startSeconds) * 100) / 100,
+      };
+      mixReport.push(entry);
+
       let bodyStart = 0;
 
       if (previousTail) {
@@ -246,13 +346,35 @@ export async function renderMixToMp3(tracks, {
         if (overlap > 0) {
           const prefixLength = previousTail.left.length - overlap;
           await encodePcm(previousTail.left.subarray(0, prefixLength), previousTail.right.subarray(0, prefixLength), index, frameCount);
-          const mixed = mixOverlap(
-            previousTail.left.subarray(prefixLength, prefixLength + overlap),
-            previousTail.right.subarray(prefixLength, prefixLength + overlap),
-            left.subarray(0, overlap),
-            right.subarray(0, overlap),
-            overlap,
-          );
+          const gains = bassSwapGains(overlap, {});
+          const mixed = bands
+            ? mixBands({
+              outLow: previousTail.bands.lowLeft.subarray(prefixLength, prefixLength + overlap),
+              outMid: previousTail.bands.midLeft.subarray(prefixLength, prefixLength + overlap),
+              outHigh: previousTail.bands.highLeft.subarray(prefixLength, prefixLength + overlap),
+              outRightLow: previousTail.bands.lowRight.subarray(prefixLength, prefixLength + overlap),
+              outRightMid: previousTail.bands.midRight.subarray(prefixLength, prefixLength + overlap),
+              outRightHigh: previousTail.bands.highRight.subarray(prefixLength, prefixLength + overlap),
+              inLow: bands.lowLeft.subarray(0, overlap),
+              inMid: bands.midLeft.subarray(0, overlap),
+              inHigh: bands.highLeft.subarray(0, overlap),
+              inRightLow: bands.lowRight.subarray(0, overlap),
+              inRightMid: bands.midRight.subarray(0, overlap),
+              inRightHigh: bands.highRight.subarray(0, overlap),
+              gains,
+              count: overlap,
+              bassSwap,
+            })
+            : (() => {
+              const plain = mixOverlap(
+                previousTail.left.subarray(prefixLength, prefixLength + overlap),
+                previousTail.right.subarray(prefixLength, prefixLength + overlap),
+                left.subarray(0, overlap),
+                right.subarray(0, overlap),
+                overlap,
+              );
+              return plain;
+            })();
           await encodePcm(mixed.left, mixed.right, index, frameCount);
           bodyStart = overlap;
         } else {
@@ -270,12 +392,24 @@ export async function renderMixToMp3(tracks, {
           previousTail = {
             left: left.slice(bodyEnd),
             right: right.slice(bodyEnd),
+            bands: bands
+              ? {
+                lowLeft: bands.lowLeft.slice(bodyEnd),
+                midLeft: bands.midLeft.slice(bodyEnd),
+                highLeft: bands.highLeft.slice(bodyEnd),
+                lowRight: bands.lowRight.slice(bodyEnd),
+                midRight: bands.midRight.slice(bodyEnd),
+                highRight: bands.highRight.slice(bodyEnd),
+              }
+              : null,
           };
         }
       } else {
         await encodePcm(left.subarray(bodyStart), right.subarray(bodyStart), index, frameCount);
       }
 
+      previousTrackMeta = { bpm: incomingBpm * appliedRatio };
+      runningCueOut += cue.endSeconds - cue.startSeconds;
       decoded = null;
       onProgress?.({ phase: 'track-done', progress: Math.round(12 + ((index + 1) / sources.length) * 78), trackIndex: index, trackCount: sources.length });
     }
@@ -286,7 +420,15 @@ export async function renderMixToMp3(tracks, {
     const blob = new Blob(encoder.chunks, { type: 'audio/mpeg' });
     if (!blob.size) throw new Error('MP3 encoder không tạo được dữ liệu.');
     onProgress?.({ phase: 'done', progress: 100, totalFrames: totalEncodedFrames, duration: totalDecodedSeconds });
-    return { blob, duration: totalEncodedFrames / sampleRate, decodedDuration: totalDecodedSeconds, sampleRate, bitrate };
+    return {
+      blob,
+      duration: totalEncodedFrames / sampleRate,
+      decodedDuration: totalDecodedSeconds,
+      sampleRate,
+      bitrate,
+      mixReport,
+      cueWindowSeconds: runningCueOut,
+    };
   } finally {
     encoder.dispose();
     if (context.state !== 'closed') await context.close().catch(() => {});

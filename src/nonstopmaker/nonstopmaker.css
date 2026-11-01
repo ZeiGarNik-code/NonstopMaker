@@ -848,3 +848,27 @@ button:disabled { cursor: not-allowed; }
 @media (max-width: 1320px) {
   .nsm-overall-progress { display: none; }
 }
+
+/* DJ skills panel, cue editor and mix report */
+.nsm-dj-panel { display: flex; flex-direction: column; }
+.nsm-dj-panel .nsm-control-row:first-of-type { border-top: 0; }
+.nsm-cue-editor { margin-top: 10px; padding: 10px; border: 1px solid rgba(109, 152, 214, .18); border-radius: 9px; background: rgba(9, 20, 38, .55); }
+.nsm-cue-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.nsm-cue-head span { overflow: hidden; color: #a9c2e4; font-size: var(--nsm-fs-micro); font-weight: 800; letter-spacing: .55px; text-overflow: ellipsis; white-space: nowrap; }
+.nsm-cue-head small { flex: 0 0 auto; padding: 2px 6px; border: 1px solid rgba(126, 158, 205, .2); border-radius: 5px; color: #86a5cd; font-size: var(--nsm-fs-micro); font-weight: 750; }
+.nsm-cue-row { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.nsm-cue-row label { flex: 0 0 auto; width: 2.6em; color: #8fa6c4; font-size: var(--nsm-fs-micro); font-weight: 700; }
+.nsm-cue-row input[type="range"] { flex: 1 1 auto; min-width: 0; height: 3px; accent-color: #5a9cff; cursor: pointer; }
+.nsm-cue-row span { flex: 0 0 auto; min-width: 3.2em; color: #b9cde8; font-size: var(--nsm-fs-micro); font-variant-numeric: tabular-nums; text-align: right; }
+.nsm-cue-reset { flex: 0 0 auto; padding: 3px 7px; border: 1px solid rgba(126, 158, 205, .22); border-radius: 6px; color: #a6c0e2; background: rgba(28, 48, 78, .7); font: inherit; font-size: var(--nsm-fs-micro); font-weight: 700; cursor: pointer; }
+.nsm-cue-reset:hover { border-color: rgba(110, 160, 255, .5); color: #e2eeff; }
+.nsm-cue-hint { margin: 2px 0 0; color: #7d93b1; font-size: var(--nsm-fs-micro); line-height: 1.5; }
+.nsm-cue-hint b { color: #9fc0ee; }
+
+.nsm-mix-report { margin: 8px 0 10px; border: 1px solid rgba(106, 150, 223, .18); border-radius: 8px; background: rgba(20, 40, 68, .3); }
+.nsm-mix-report summary { padding: 8px 10px; color: #a8c3e6; font-size: var(--nsm-fs-small); font-weight: 700; cursor: pointer; }
+.nsm-mix-report summary:hover { color: #d6e7ff; }
+.nsm-mix-report table { width: 100%; border-collapse: collapse; }
+.nsm-mix-report th { padding: 5px 8px; border-bottom: 1px solid rgba(146, 174, 214, .12); color: #7f97b8; font-size: var(--nsm-fs-micro); font-weight: 800; text-align: left; }
+.nsm-mix-report td { max-width: 12em; padding: 5px 8px; overflow: hidden; border-bottom: 1px solid rgba(146, 174, 214, .07); color: #b3c8e4; font-size: var(--nsm-fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+.nsm-mix-report tr:last-child td { border-bottom: 0; }

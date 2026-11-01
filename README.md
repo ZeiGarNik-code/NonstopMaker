@@ -42,6 +42,29 @@ Progress rules live in `src/nonstopmaker/progress.js` with unit tests, so the he
 3. Preview and edit the set timeline, crossfade, and optional RMS normalization.
 4. Render a local MP3 or export an M3U playlist / JSON mix plan.
 
+## DJ mixing engine
+
+The renderer no longer just concatenates tracks. Each mix runs through a real
+DJ chain (`src/nonstopmaker/djDsp.js`, unit tested):
+
+| Skill | What it does | Toggle |
+|---|---|---|
+| **Beat grid** | Detects onsets, estimates the downbeat by scoring the four phases of a 4/4 bar | automatic |
+| **Tempo sync** | Pulls the incoming track onto the outgoing BPM by resampling; refuses gaps wider than ±6% to keep vocals natural | `Tempo sync (±6%)` |
+| **Beat-align** | Starts the crossfade on a bar boundary and rounds its length to whole bars | `Beat-align tự động` |
+| **Bass swap / EQ 3 band** | Splits into low/mid/high, closes the outgoing lows before opening the incoming ones so two basslines never sum into mud | `Bass swap (EQ 3 band)` |
+| **Cue points** | Automatic mix-in on the first bar after 16 beats, plus manual in/out sliders per track | `Điểm vào tự động` / sliders |
+| **RMS normalize** | Levels every track before it enters the mix | `Tự cân bằng âm` |
+
+Verified end to end: a 128 BPM track mixed into a 124 BPM set measures
+**123.8 BPM** in the rendered MP3 with tempo sync on, and **128.4 BPM** with it
+off. The render screen shows a per-track report (BPM, applied tempo ratio, cue
+window, bass swap) and the same data is written into the JSON mix plan.
+
+Limitations: tempo sync resamples, so pitch shifts with tempo (no key lock), and
+the beat grid assumes 4/4. Tracks without a BPM estimate are joined at their
+native tempo.
+
 ## Local analysis and rendering
 
 - Audio is decoded with the Web Audio API and analyzed in Web Workers. Source files remain local.
