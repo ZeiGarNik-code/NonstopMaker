@@ -12,6 +12,7 @@ import {
   snapToBar,
   splitBands,
 } from './djDsp.js';
+import { timeStretchStereo } from './timeStretch.js';
 
 const MAX_SOURCE_FILE_BYTES = 120 * 1024 * 1024;
 const MAX_TRACK_SECONDS = 15 * 60;
@@ -178,6 +179,7 @@ export async function renderMixToMp3(tracks, {
   beatAlign = true,
   tempoSync = true,
   tempoSyncLimit = 0.06,
+  keyLock = true,
   autoCue = true,
   autoCueBeats = 16,
   signal,
@@ -268,15 +270,33 @@ export async function renderMixToMp3(tracks, {
         ? planTempoSync(outgoingBpm, incomingBpm, tempoSyncLimit)
         : { playable: false, ratio: null, withinLimit: false, reason: 'Tempo sync tắt hoặc thiếu BPM' };
       let appliedRatio = 1;
+      let keyLockApplied = false;
       if (tempoPlan.playable && tempoPlan.withinLimit && Math.abs(tempoPlan.ratio) > 0.0008) {
         // planTempoSync returns how much faster the incoming track already is
-        // (+3.2% for 128 against 124), so it must be resampled by the inverse:
-        // a longer buffer plays back slower and lands on the outgoing tempo.
+        // (+3.2% for 128 against 124). Slowing it to the outgoing tempo means
+        // stretching it by the same factor.
         appliedRatio = 1 + tempoPlan.ratio;
-        const resampleRatio = 1 / appliedRatio;
-        left = resampleLinear(left, resampleRatio);
-        right = resampleLinear(right, resampleRatio);
+        const stretch = appliedRatio;
         onProgress?.({ phase: 'tempo', progress: Math.round(10 + (index / sources.length) * 70), trackIndex: index, trackCount: sources.length, ratio: appliedRatio });
+        if (keyLock) {
+          // Stretch time without moving pitch, so vocals stay in key while the
+          // beats line up. Falls back to resampling if the vocoder cannot run.
+          try {
+            const stretched = timeStretchStereo(left, right, stretch, {});
+            left = stretched.left;
+            right = stretched.right;
+            keyLockApplied = true;
+          } catch {
+            keyLockApplied = false;
+            const resampleRatio = 1 / appliedRatio;
+            left = resampleLinear(left, resampleRatio);
+            right = resampleLinear(right, resampleRatio);
+          }
+        } else {
+          const resampleRatio = 1 / appliedRatio;
+          left = resampleLinear(left, resampleRatio);
+          right = resampleLinear(right, resampleRatio);
+        }
       }
 
       const frameCount = left.length;
@@ -329,6 +349,7 @@ export async function renderMixToMp3(tracks, {
         tempoSynced: appliedRatio !== 1,
         tempoOutOfRange: Boolean(tempoPlan.playable && tempoPlan.outOfRange),
         tempoReason: tempoPlan.reason || null,
+        keyLock: keyLockApplied,
         cueIn: Math.round(cue.startSeconds * 100) / 100,
         cueOut: Math.round(cue.endSeconds * 100) / 100,
         cueSource: (Number(track.cueIn) > 0 || Number(track.cueOut) > 0) ? 'manual' : 'auto',

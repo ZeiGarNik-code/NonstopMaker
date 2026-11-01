@@ -21,6 +21,7 @@ import {
   Headphones,
   Info,
   ListMusic,
+  Lock,
   Menu,
   MoreHorizontal,
   MoveDown,
@@ -721,6 +722,8 @@ function EditorScreen({
   setBeatAlign,
   tempoSync,
   setTempoSync,
+  keyLock,
+  setKeyLock,
   autoCue,
   setAutoCue,
   onCueChange,
@@ -846,6 +849,7 @@ function EditorScreen({
             <div className="nsm-control-row"><div><strong>Bass swap (EQ 3 band)</strong><small>Cắt bass bài ra trước khi mở bass bài vào — hết đục tiếng</small></div><button className={`nsm-switch ${bassSwap ? 'is-on' : ''}`} type="button" role="switch" aria-checked={bassSwap} aria-label="Bass swap" onClick={() => setBassSwap(!bassSwap)}><i /></button></div>
             <div className="nsm-control-row"><div><strong>Beat-align tự động</strong><small>Fade vào đúng downbeat, dài nguyên số ô nhịp</small></div><button className={`nsm-switch ${beatAlign ? 'is-on' : ''}`} type="button" role="switch" aria-checked={beatAlign} aria-label="Beat-align tự động" onClick={() => setBeatAlign(!beatAlign)}><i /></button></div>
             <div className="nsm-control-row"><div><strong>Tempo sync (±6%)</strong><small>Kéo tempo bài vào khớp bài trước; lệch quá 6% sẽ giữ nguyên</small></div><button className={`nsm-switch ${tempoSync ? 'is-on' : ''}`} type="button" role="switch" aria-checked={tempoSync} aria-label="Tempo sync" onClick={() => setTempoSync(!tempoSync)}><i /></button></div>
+            <div className="nsm-control-row"><div><strong>Key lock</strong><small>Giữ nguyên cao độ khi đổi tempo — giọng hát không bị méo (chậm hơn khi render)</small></div><button className={`nsm-switch ${keyLock ? 'is-on' : ''}`} type="button" role="switch" aria-checked={keyLock} aria-label="Key lock" disabled={!tempoSync} onClick={() => setKeyLock(!keyLock)}><i /></button></div>
             <div className="nsm-control-row"><div><strong>Điểm vào tự động</strong><small>Tự canh cue-in vào ô nhịp đầu tiên</small></div><button className={`nsm-switch ${autoCue ? 'is-on' : ''}`} type="button" role="switch" aria-checked={autoCue} aria-label="Điểm vào tự động" onClick={() => setAutoCue(!autoCue)}><i /></button></div>
             {activeTrack && (
               <div className="nsm-cue-editor">
@@ -895,6 +899,7 @@ function ExportScreen({
   bassSwap,
   beatAlign,
   tempoSync,
+  keyLock,
   autoCue,
   renderState,
   canRender,
@@ -919,7 +924,7 @@ function ExportScreen({
           <p>{selectedTracks.length} bài được xếp theo thứ tự hiện tại; MP3 sẽ được mã hóa ngay trên thiết bị.</p>
           <div className="nsm-export-stats"><div><small>TRACKS</small><strong>{selectedTracks.length}</strong></div><div><small>THỜI LƯỢNG GỐC</small><strong>{totalDuration ? formatTime(totalDuration) : 'Đang đo'}</strong></div><div><small>BITRATE</small><strong>{bitrate} kbps</strong></div></div>
           <label className="nsm-input-label" htmlFor="export-name">TÊN FILE ĐẦU RA</label><div className="nsm-name-input-wrap"><Save size={15} /><input id="export-name" value={setName} onChange={(event) => setSetName(event.target.value)} maxLength={54} /><span>.mp3</span></div>
-          <div className="nsm-export-disclaimer"><Info size={15} /><span><strong>Render MP3 thật, xử lý cục bộ.</strong> Không gửi nhạc lên máy chủ. Mixer tự beat-align, bass swap và tempo sync trong ±6%; bài lệch quá ±6% sẽ được nối ở tempo gốc.</span></div>
+          <div className="nsm-export-disclaimer"><Info size={15} /><span><strong>Render MP3 thật, xử lý cục bộ.</strong> Không gửi nhạc lên máy chủ. Mixer tự beat-align, bass swap và tempo sync trong ±6% (kèm key lock giữ nguyên cao độ); bài lệch quá ±6% sẽ được nối ở tempo gốc.</span></div>
         </section>
         <aside className="nsm-export-options">
           <div className="nsm-panel nsm-export-option-panel"><span className="nsm-eyebrow">AUDIO MASTER</span><h3>Tạo file MP3</h3>
@@ -940,7 +945,7 @@ function ExportScreen({
                         <td>{String(index + 1).padStart(2, '0')}</td>
                         <td title={row.title}>{row.title}</td>
                         <td>{row.bpm ?? '—'}{row.targetBpm && row.targetBpm !== row.bpm ? ` → ${row.targetBpm}` : ''}</td>
-                        <td>{row.tempoSynced ? `${row.tempoRatio > 0 ? '+' : ''}${(row.tempoRatio * 100).toFixed(1)}%` : row.tempoOutOfRange ? 'ngoài ±6%' : '—'}</td>
+                        <td className="nsm-tempo-cell">{row.tempoSynced ? <>{row.tempoRatio > 0 ? '+' : ''}{(row.tempoRatio * 100).toFixed(1)}%{row.keyLock && <span className="nsm-keylock-badge" title="Key lock bật: cao độ được giữ nguyên"><Lock size={10} /> lock</span>}</> : row.tempoOutOfRange ? 'ngoài ±6%' : '—'}</td>
                         <td>{formatTime(row.cueIn)}–{formatTime(row.cueOut)}</td>
                         <td>{row.bassSwap ? 'swap' : '—'}</td>
                       </tr>
@@ -949,7 +954,7 @@ function ExportScreen({
                 </table>
               </details>
             )}
-            <div className="nsm-render-options-caption"><span><Check size={11} /> {transition === 'Cắt gọn' ? 'Không crossfade' : `Crossfade ${crossfade}s`}</span>{transition !== 'Cắt gọn' && <span><Check size={11} /> {beatAlign ? 'Beat-align theo ô nhịp' : alignFadeToBpm ? 'Fade theo BPM' : 'Fade cố định'}</span>}<span><Check size={11} /> {bassSwap ? 'Bass swap EQ 3 band' : 'Không bass swap'}</span><span><Check size={11} /> {tempoSync ? 'Tempo sync ±6%' : 'Không tempo sync'}</span><span><Check size={11} /> {autoCue ? 'Cue tự động' : 'Cue thủ công'}</span><span><Check size={11} /> {normalizeAudio ? 'Cân bằng RMS' : 'Không chuẩn hóa'}</span></div>
+            <div className="nsm-render-options-caption"><span><Check size={11} /> {transition === 'Cắt gọn' ? 'Không crossfade' : `Crossfade ${crossfade}s`}</span>{transition !== 'Cắt gọn' && <span><Check size={11} /> {beatAlign ? 'Beat-align theo ô nhịp' : alignFadeToBpm ? 'Fade theo BPM' : 'Fade cố định'}</span>}<span><Check size={11} /> {bassSwap ? 'Bass swap EQ 3 band' : 'Không bass swap'}</span><span><Check size={11} /> {tempoSync ? `Tempo sync ±6%${keyLock ? ' · key lock' : ''}` : 'Không tempo sync'}</span><span><Check size={11} /> {autoCue ? 'Cue tự động' : 'Cue thủ công'}</span><span><Check size={11} /> {normalizeAudio ? 'Cân bằng RMS' : 'Không chuẩn hóa'}</span></div>
             <div className="nsm-render-hint"><Info size={14} /> Giới hạn render: 120 MB / track, 15 phút / track, tối đa 120 phút / set. Định dạng giải mã tùy trình duyệt.</div>
             <div className="nsm-export-divider" />
             <button className="nsm-export-option" type="button" onClick={onExportM3U}><span className="nsm-export-file-icon"><ListMusic size={18} /></span><span><strong>Playlist M3U8</strong><small>Mở trong phần mềm nghe nhạc / DJ</small></span><span className="nsm-export-size">~1 KB <Download size={15} /></span></button>
@@ -982,6 +987,7 @@ function NonstopMakerApp() {
   const [bassSwap, setBassSwap] = useState(true);
   const [beatAlign, setBeatAlign] = useState(true);
   const [tempoSync, setTempoSync] = useState(true);
+  const [keyLock, setKeyLock] = useState(true);
   const [autoCue, setAutoCue] = useState(true);
   const [mixReport, setMixReport] = useState(null);
   const [mp3Bitrate, setMp3Bitrate] = useState(192);
@@ -1291,6 +1297,7 @@ function NonstopMakerApp() {
         bassSwap,
         beatAlign,
         tempoSync,
+        keyLock,
         autoCue,
         signal: controller.signal,
         onProgress: (progress) => {
@@ -1456,6 +1463,7 @@ function NonstopMakerApp() {
       bassSwap,
       beatAlign,
       tempoSync,
+      keyLock,
       autoCue,
       bitrateKbps: mp3Bitrate,
       styles: selectedStyles,
@@ -1591,6 +1599,8 @@ function NonstopMakerApp() {
           setBeatAlign={setBeatAlign}
           tempoSync={tempoSync}
           setTempoSync={setTempoSync}
+          keyLock={keyLock}
+          setKeyLock={setKeyLock}
           autoCue={autoCue}
           setAutoCue={setAutoCue}
           onCueChange={updateCue}
@@ -1621,6 +1631,7 @@ function NonstopMakerApp() {
           bassSwap={bassSwap}
           beatAlign={beatAlign}
           tempoSync={tempoSync}
+          keyLock={keyLock}
           autoCue={autoCue}
           renderState={renderState}
           canRender={selectedTracks.length > 0 && selectedTracks.every((track) => Boolean(track.file))}

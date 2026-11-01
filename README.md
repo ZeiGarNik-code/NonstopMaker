@@ -50,20 +50,29 @@ DJ chain (`src/nonstopmaker/djDsp.js`, unit tested):
 | Skill | What it does | Toggle |
 |---|---|---|
 | **Beat grid** | Detects onsets, estimates the downbeat by scoring the four phases of a 4/4 bar | automatic |
-| **Tempo sync** | Pulls the incoming track onto the outgoing BPM by resampling; refuses gaps wider than ±6% to keep vocals natural | `Tempo sync (±6%)` |
+| **Tempo sync** | Pulls the incoming track onto the outgoing BPM; refuses gaps wider than ±6% to keep vocals natural | `Tempo sync (±6%)` |
+| **Key lock** | Phase-vocoder time stretch with identity phase locking and transient resets, so changing tempo leaves the pitch untouched | `Key lock` |
 | **Beat-align** | Starts the crossfade on a bar boundary and rounds its length to whole bars | `Beat-align tự động` |
 | **Bass swap / EQ 3 band** | Splits into low/mid/high, closes the outgoing lows before opening the incoming ones so two basslines never sum into mud | `Bass swap (EQ 3 band)` |
 | **Cue points** | Automatic mix-in on the first bar after 16 beats, plus manual in/out sliders per track | `Điểm vào tự động` / sliders |
 | **RMS normalize** | Levels every track before it enters the mix | `Tự cân bằng âm` |
 
-Verified end to end: a 128 BPM track mixed into a 124 BPM set measures
-**123.8 BPM** in the rendered MP3 with tempo sync on, and **128.4 BPM** with it
-off. The render screen shows a per-track report (BPM, applied tempo ratio, cue
-window, bass swap) and the same data is written into the JSON mix plan.
+Verified end to end on generated WAVs, measuring the rendered MP3 itself:
 
-Limitations: tempo sync resamples, so pitch shifts with tempo (no key lock), and
-the beat grid assumes 4/4. Tracks without a BPM estimate are joined at their
-native tempo.
+| Setting | Tempo | Pitch of a 440 Hz tone |
+|---|---|---|
+| Tempo sync off | 128.4 BPM | 440 Hz |
+| Tempo sync on, no key lock | 123.8 BPM | **426.3 Hz** (drifts ~0.55 semitone) |
+| Tempo sync on + key lock | 123.0 BPM | **440.01 Hz** (pitch preserved) |
+
+The render screen shows a per-track report (BPM, applied tempo ratio, key lock,
+cue window, bass swap) and the same data is written into the JSON mix plan.
+
+Limitations: key locking is a phase vocoder, which is meaningfully slower than
+plain resampling, so rendering a long set takes longer when it is enabled (turn
+it off for a quick draft). Transients are protected with frame resets, but heavy
+stretching beyond ±6% would start to smear drums. The beat grid assumes 4/4, and
+tracks without a BPM estimate are joined at their native tempo.
 
 ## Local analysis and rendering
 
