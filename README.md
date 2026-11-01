@@ -13,6 +13,17 @@ npm run dev
 
 Open the Vite URL and choose **Mở demo** to preview the interface with synthetic metadata, or import local audio files/folders. Demo tracks contain metadata only and cannot be analyzed or rendered.
 
+## Progress tracking
+
+Every step shows a percentage so long imports and renders are easy to follow:
+
+- **App bar** — each of the four steps carries its own `%` and a mini bar, plus one overall `%` for the whole flow. Steps you have not reached yet stay at 0%.
+- **Step card** — under the app bar, the current step shows its `%`, a checklist of what is already done (for example "Có bài trong set", "Có BPM / tone"), and the next item to finish.
+- **Live work** — BPM/key analysis and MP3 rendering stream their own percentage, phase label, and current track name while they run.
+- **Failure safety** — a render error shows a recovery card instead of a blank screen.
+
+Progress rules live in `src/nonstopmaker/progress.js` with unit tests, so the header, the step card, and the tests cannot drift apart.
+
 ## Workflow
 
 1. Choose local audio files/folders and set target duration, mood, and styles.

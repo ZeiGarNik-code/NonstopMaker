@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDown,
@@ -57,16 +57,120 @@ import {
   STYLE_OPTIONS,
   sumTrackDuration,
 } from './mixUtils.js';
+import {
+  clampPercent,
+  computeOverallProgress,
+  computeStepProgress,
+  describeActivity,
+  WORKFLOW,
+} from './progress.js';
 import './nonstopmaker.css';
 
-const WORKFLOW = [
-  { id: 'setup', number: '01', label: 'Chọn nhạc' },
-  { id: 'arrange', number: '02', label: 'Xếp set' },
-  { id: 'editor', number: '03', label: 'Nghe & chỉnh sửa' },
-  { id: 'export', number: '04', label: 'Xuất file' },
-];
-
 const TRANSITIONS = ['Fade mềm', 'Cắt gọn'];
+
+function ProgressBar({ value = 0, label, detail, tone = 'blue', size = 'md', showValue = true, indeterminate = false }) {
+  const percent = clampPercent(value);
+  return (
+    <div className={`nsm-progress nsm-progress-${size} nsm-progress-${tone}`} role="group" aria-label={label || 'Tiến trình'}>
+      {(label || showValue) && (
+        <div className="nsm-progress-head">
+          <span className="nsm-progress-label">{label}</span>
+          {showValue && <strong className="nsm-progress-value">{indeterminate ? '…' : `${percent}%`}</strong>}
+        </div>
+      )}
+      <div
+        className={`nsm-progress-track ${indeterminate ? 'is-indeterminate' : ''}`}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={indeterminate ? undefined : percent}
+        aria-valuetext={detail ? `${percent}% · ${detail}` : `${percent}%`}
+        aria-label={label || 'Tiến trình'}
+      >
+        <span style={{ width: indeterminate ? '38%' : `${percent}%` }} />
+      </div>
+      {detail && <small className="nsm-progress-detail">{detail}</small>}
+    </div>
+  );
+}
+
+function StepProgressCard({ progress, activity }) {
+  return (
+    <section className={`nsm-step-progress ${progress.complete ? 'is-complete' : ''}`} aria-label={`Tiến trình bước ${progress.number}`}>
+      <div className="nsm-step-progress-main">
+        <div className="nsm-step-progress-badge">
+          <span>{progress.complete ? <CheckCircle2 size={15} /> : <Activity size={15} />}</span>
+          <div>
+            <strong>BƯỚC {progress.number} / 04 · {progress.label.toUpperCase()}</strong>
+            <small>{progress.summary}</small>
+          </div>
+        </div>
+        <div className="nsm-step-progress-bar">
+          <div className="nsm-step-progress-value">{progress.percent}<span>%</span></div>
+          <div className="nsm-progress-track nsm-progress-track-lg" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} aria-valuetext={`Bước ${progress.number} hoàn thành ${progress.percent}%`} aria-label={`Tiến trình bước ${progress.number}: ${progress.label}`}>
+            <span style={{ width: `${progress.percent}%` }} />
+          </div>
+        </div>
+      </div>
+      <div className="nsm-step-progress-checks">
+        {progress.checks.map((check) => (
+          <span key={check.id} className={`nsm-step-check ${check.done ? 'is-done' : ''}`}>
+            <i>{check.done ? <Check size={10} /> : null}</i>
+            {check.label}
+          </span>
+        ))}
+      </div>
+      {activity && (
+        <div className="nsm-step-activity" role="status">
+          <Activity size={13} className="nsm-spinning" />
+          <div className="nsm-step-activity-body">
+            <span>{activity.label} · <strong>{activity.percent}%</strong></span>
+            <small>{activity.detail}</small>
+            <ProgressBar value={activity.percent} tone="cyan" size="sm" showValue={false} label={activity.label} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="nsm-crash" role="alert">
+          <div className="nsm-crash-card">
+            <span className="nsm-crash-icon"><Info size={22} /></span>
+            <h1>Bước này gặp lỗi hiển thị</h1>
+            <p>
+              Nhạc của bạn vẫn nằm trên máy và chưa có tệp nào bị tải lên. Bấm thử lại để về bước Chọn nhạc,
+              hoặc tải lại trang nếu lỗi còn tiếp diễn.
+            </p>
+            <pre className="nsm-crash-detail">{String(this.state.error?.message || this.state.error)}</pre>
+            <div className="nsm-crash-actions">
+              <button className="nsm-button nsm-button-primary" type="button" onClick={() => { this.setState({ error: null }); this.props.onReset?.(); }}>
+                <ArrowLeft size={15} /> Về bước Chọn nhạc
+              </button>
+              <button className="nsm-button nsm-button-secondary" type="button" onClick={() => window.location.reload()}>
+                Tải lại trang
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function downloadText(filename, content, mimeType) {
   const blob = new Blob([content], { type: mimeType });
@@ -210,7 +314,8 @@ function SectionHeading({ number, title, description, accessory }) {
   );
 }
 
-function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport }) {
+function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onExport, stepPercents, overallPercent, activity }) {
+  const currentIndex = WORKFLOW.findIndex((stage) => stage.id === screen);
   return (
     <header className="nsm-topbar">
       <a className="nsm-brand" href="#home" onClick={(event) => { event.preventDefault(); onNavigate('setup'); }} aria-label="NonstopMaker Lite - trang đầu">
@@ -224,28 +329,51 @@ function Header({ screen, onNavigate, hasTracks, simpleMode, setSimpleMode, onEx
       <nav className="nsm-workflow" aria-label="Quy trình tạo nonstop">
         {WORKFLOW.map((item, index) => {
           const active = screen === item.id;
-          const currentIndex = WORKFLOW.findIndex((stage) => stage.id === screen);
-          const complete = index < currentIndex;
           const disabled = index > 0 && !hasTracks;
+          // Steps the user has not reached yet always read 0% so the bar never
+          // claims progress that has not been worked on.
+          const reached = index <= currentIndex;
+          const percent = reached ? (stepPercents[item.id] ?? 0) : 0;
+          const done = index < currentIndex || (reached && percent === 100);
           return (
-            <button
-              className={`nsm-workflow-step ${active ? 'is-active' : ''} ${complete ? 'is-complete' : ''}`}
-              key={item.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onNavigate(item.id)}
-              aria-current={active ? 'step' : undefined}
-            >
-              <span className="nsm-workflow-number">{complete ? <Check size={12} /> : item.number}</span>
-              <span>{item.label}</span>
+            <Fragment key={item.id}>
+              <button
+                className={`nsm-workflow-step ${active ? 'is-active' : ''} ${done ? 'is-complete' : ''}`}
+                type="button"
+                disabled={disabled}
+                onClick={() => onNavigate(item.id)}
+                aria-current={active ? 'step' : undefined}
+                aria-label={`Bước ${item.number} ${item.label} · hoàn thành ${percent}%`}
+              >
+                <span className="nsm-workflow-number">{done ? <Check size={12} /> : item.number}</span>
+                <span className="nsm-workflow-label">{item.label}</span>
+                <span className={`nsm-workflow-percent ${percent === 100 ? 'is-full' : ''}`}>{percent}%</span>
+                <span className="nsm-workflow-meter" aria-hidden="true"><i style={{ width: `${percent}%` }} /></span>
+              </button>
               {index < WORKFLOW.length - 1 && <ChevronRight className="nsm-workflow-chevron" size={14} />}
-            </button>
+            </Fragment>
           );
         })}
       </nav>
 
       <div className="nsm-header-actions">
         <span className="nsm-local-pill"><ShieldCheck size={13} /> Nhạc nằm trên máy bạn</span>
+        <div className="nsm-overall-progress" title={`Toàn bộ quy trình đã hoàn tất ${overallPercent}%`}>
+          <div className="nsm-overall-copy">
+            <span>TOÀN BỘ</span>
+            <strong>{overallPercent}%</strong>
+          </div>
+          <div className="nsm-overall-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent} aria-label={`Tiến trình toàn bộ: ${overallPercent}%`}>
+            <span style={{ width: `${overallPercent}%` }} />
+          </div>
+          {activity && (
+            <div className="nsm-overall-activity" role="status">
+              <Activity size={11} className="nsm-spinning" />
+              <span>{activity.label}</span>
+              <strong>{activity.percent}%</strong>
+            </div>
+          )}
+        </div>
         <button className={`nsm-simple-toggle ${simpleMode ? 'is-on' : ''}`} type="button" onClick={() => setSimpleMode(!simpleMode)} aria-pressed={simpleMode}>
           <span className="nsm-toggle-dot" />
           <span>Đơn giản</span>
@@ -429,6 +557,7 @@ function SetupScreen({
 function ArrangeScreen({
   tracks,
   selectedTracks,
+  activeTrack,
   activeTrackId,
   mood,
   search,
@@ -728,7 +857,7 @@ function ExportScreen({
   );
 }
 
-export default function NonstopMakerApp() {
+function NonstopMakerApp() {
   const [screen, setScreen] = useState('setup');
   const [tracks, setTracks] = useState([]);
   const [targetDuration, setTargetDuration] = useState('60');
@@ -746,6 +875,9 @@ export default function NonstopMakerApp() {
   const [mp3Bitrate, setMp3Bitrate] = useState(192);
   const [analysisState, setAnalysisState] = useState({ status: 'idle', progress: 0 });
   const [renderState, setRenderState] = useState({ status: 'idle', progress: 0 });
+  const [orderTouched, setOrderTouched] = useState(false);
+  const [playbackTouched, setPlaybackTouched] = useState(false);
+  const [exportedArtifacts, setExportedArtifacts] = useState(false);
   const [activeTrackId, setActiveTrackId] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
@@ -771,6 +903,10 @@ export default function NonstopMakerApp() {
       folderInput.setAttribute('directory', '');
     }
   }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [screen]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -919,6 +1055,7 @@ export default function NonstopMakerApp() {
     }
     const sorted = arrangeTracksByCompatibility(tracks);
     setTracks(sorted);
+    setOrderTouched(true);
     const firstSelected = sorted.find((track) => track.selected);
     if (firstSelected) setActiveTrackId(firstSelected.id);
     const analyzedCount = selectedTracks.filter((track) => track.analysisStatus === 'done').length;
@@ -1097,6 +1234,7 @@ export default function NonstopMakerApp() {
   function moveTrack(index, direction) {
     const target = index + direction;
     if (target < 0 || target >= tracks.length) return;
+    setOrderTouched(true);
     setTracks((current) => {
       const next = [...current];
       [next[index], next[target]] = [next[target], next[index]];
@@ -1113,6 +1251,7 @@ export default function NonstopMakerApp() {
   }
 
   function togglePlayback() {
+    setPlaybackTouched(true);
     if (!activeTrack) {
       showToast('Chọn bài demo hoặc thêm file audio để nghe preview.');
       return;
@@ -1157,6 +1296,7 @@ export default function NonstopMakerApp() {
       return;
     }
     downloadText(`${safeFileName(setName)}.m3u8`, buildM3U(selectedTracks, setName), 'audio/x-mpegurl;charset=utf-8');
+    setExportedArtifacts(true);
     showToast('Playlist M3U8 đã tải xuống.');
   }
 
@@ -1178,6 +1318,7 @@ export default function NonstopMakerApp() {
       genres: selectedGenres,
     });
     downloadText(`${safeFileName(setName)}-mix-plan.json`, JSON.stringify(plan, null, 2), 'application/json;charset=utf-8');
+    setExportedArtifacts(true);
     showToast('Mix plan JSON đã tải xuống.');
   }
 
@@ -1189,11 +1330,45 @@ export default function NonstopMakerApp() {
     setScreen('export');
   };
 
+  const progressContext = {
+    tracks,
+    selectedTracks,
+    targetDuration,
+    mood,
+    setName,
+    transition,
+    crossfade,
+    analysisState,
+    renderState,
+    orderTouched,
+    playbackTouched,
+    exportedArtifacts,
+  };
+  // Cheap pure calculations: recomputed on render so the percentages always match
+  // the current state without extra memo dependencies to keep in sync.
+  const stepProgress = computeStepProgress(screen, progressContext);
+  const stepPercents = Object.fromEntries(
+    WORKFLOW.map((step) => [step.id, computeStepProgress(step.id, progressContext).percent]),
+  );
+  const overallPercent = computeOverallProgress(screen, progressContext);
+  const activity = describeActivity(analysisState, renderState);
+
   return (
     <div className="nsm-app">
       <input ref={folderInputRef} className="nsm-hidden-input" type="file" multiple accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" onChange={handleFolderFiles} aria-label="Chọn thư mục nhạc" />
       <input ref={fileInputRef} className="nsm-hidden-input" type="file" multiple accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.wma" onChange={handleInputFiles} aria-label="Chọn tệp nhạc" />
-      <Header screen={screen} onNavigate={navigate} hasTracks={trackCount > 0} simpleMode={simpleMode} setSimpleMode={setSimpleMode} onExport={onTopExport} />
+      <Header
+        screen={screen}
+        onNavigate={navigate}
+        hasTracks={trackCount > 0}
+        simpleMode={simpleMode}
+        setSimpleMode={setSimpleMode}
+        onExport={onTopExport}
+        stepPercents={stepPercents}
+        overallPercent={overallPercent}
+        activity={activity}
+      />
+      <StepProgressCard progress={stepProgress} activity={activity} />
 
       {screen === 'setup' && (
         <SetupScreen
@@ -1223,6 +1398,7 @@ export default function NonstopMakerApp() {
         <ArrangeScreen
           tracks={tracks}
           selectedTracks={selectedTracks}
+          activeTrack={activeTrack}
           activeTrackId={activeTrackId}
           mood={mood}
           search={search}
@@ -1302,5 +1478,14 @@ export default function NonstopMakerApp() {
       {toast && <div className="nsm-toast" role="status"><CheckCircle2 size={16} /><span>{toast}</span><button type="button" onClick={() => setToast('')} aria-label="Đóng thông báo"><X size={14} /></button></div>}
       <footer className="nsm-footer"><span><span className="nsm-footer-mark"><AudioLines size={13} /></span> NonstopMaker <b>Lite</b></span><span>Phân tích / render cục bộ · audio không rời khỏi thiết bị</span><button type="button" onClick={() => showToast('BPM / tone là ước lượng; MP3 được trộn và mã hóa ngay trong trình duyệt.')}>Giới thiệu <Info size={12} /></button></footer>
     </div>
+  );
+}
+
+export default function AppWithGuard() {
+  const [guardKey, setGuardKey] = useState(0);
+  return (
+    <AppErrorBoundary key={guardKey} onReset={() => { setGuardKey((value) => value + 1); }}>
+      <NonstopMakerApp />
+    </AppErrorBoundary>
   );
 }
